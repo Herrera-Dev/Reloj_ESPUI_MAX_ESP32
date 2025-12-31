@@ -1,41 +1,45 @@
 
-// ESPAsyncWebServer 3.1.0
 
 #define DEBUG 1
-#define RTC 0
-#define SERVIDOR 1
+#define WEB 1     // EspUI Web
+#define RTC 0     // Modulo RTC DS3231
+#define MICRO 1   // Modulo de sonido KY-037
+#define MOD_DHT 1 // Modulo DHT22
 
-#if SERVIDOR
+#if WEB
 #include <ESPUI.h>
 #endif
 
 #include <WiFi.h>
+#include <HTTPClient.h>
 #include <ESPmDNS.h>
 #include <Wire.h>
+#include <Arduino_JSON.h>
+#if RTC
 #include "RTClib.h"
+#endif
+#include "SPI.h"
+#include <MD_Parola.h>
+#if MOD_DHT
+#include <DHT.h>
+#endif
 #include <Preferences.h>
 Preferences memoria;
 
-#include "SPI.h"
-#include <MD_Parola.h>
-
-#include <DHT.h>
 #include "fontText.h"
 #include "caracteres.h"
 
-String ssid;
-String password;
-char miIp[40];
+char miIp[16];
+IPAddress apIP(192, 168, 6, 1);
 const char *mdns = "espui"; // Web: http://espui.local/
 const char *hostname = "ESPUI-MAX";
-IPAddress apIP(192, 168, 6, 1);
+const char *hostpass = "12345678";
 const char *ntp = "pool.ntp.org";
 
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_DEVICES 4
-
 #define DATA_PIN 23 // or MOSI
-#define CS_PIN 5    // or SS (cambiable a otro gpin)
+#define CS_PIN 5    // or SS (cambiable a otro gpio)
 #define CLK_PIN 18  // or SCK
 
 MD_Parola P = MD_Parola(HARDWARE_TYPE, DATA_PIN, CLK_PIN, CS_PIN, MAX_DEVICES);
@@ -66,14 +70,29 @@ tipoEfecto catalogo[] = {
     {"GROW_U", PA_GROW_UP, 7, 1},
 };
 
+struct creden
+{
+  char ssid[15];
+  char password[20];
+  char keyCripto[45];  // API CoinMarketCap --> https://pro.coinmarketcap.com/
+  char criptos[2][6];  // ejm: BTC, ETH
+  char divisa[6];      // Ejm: USD, EUR, ARS, MXN
+  char keyWeather[40]; // API openWeatherMap --> https://home.openweathermap.org/users/sign_in
+  char city[20];       // Ejm: New York, London, Madrid --> https://openweathermap.org/
+  char country[6];     // Ejm: US, GB, ES
+};
+creden llaves = {"null", "null", "null", {"BTC", "ETH"}, "USD", "null", "London", "GB"};
+
 bool inicio = true;
 bool enLinea = false;
 bool tipoFont = true;
 unsigned long tAntUpdate;
 
 // MICROFONO
+#if MICRO
 #define micro 35
 byte flanco = 0;
+#endif
 
 // BUZZER
 #define buzzer 33
@@ -82,13 +101,18 @@ bool silenciar = false;
 bool mensAlarm = true;
 
 // DHT22
+#if MOD_DHT
 #define sensor_temp 15
 #define Tipo DHT22
 DHT dht(sensor_temp, Tipo);
 const float calibTemp = -0.60;
+#endif
+String jsonBuffer;
 
 // RTC
+#if RTC
 RTC_DS3231 rtc;
+#endif
 char miHoraV[6]; // 00_00
 char miHoraAnt[6];
 bool rInicio = true;
@@ -101,10 +125,10 @@ unsigned long tRtcAnt;
 #define BTN_SW 17
 int lastCLKState;
 int currentCLKState;
-int mins = 0;
-int secs = 0;
-int valor = 0;
-int estadTemp = 0;
+uint16_t mins = 0;
+uint16_t secs = 0;
+uint16_t valor = 0;
+uint8_t estadTemp = 0;
 bool modoTemp = false;
 unsigned long duracion = 0;
 unsigned long tiempoInicio = 0;
@@ -136,6 +160,7 @@ unsigned long tWebCabAnt;
 
 bool memEncendido = true; // Encendido o Apagado
 bool memRelojUDP = true;  // 0=RTC, 1=UDP
+bool memClimaOWM = true;  // 0=DHT22, 1=openWheaterMap
 bool memRelojActu = true; // Actualizar: manual=0, automatico=1
 String memHora = "00";
 String memMin = "00";
@@ -158,23 +183,29 @@ byte memMensaPausa = 0;      // Mensaje: pausar en pantalla
 bool memModAP = false;
 unsigned long tMensaAnt;
 
+#if WEB
 static const String deshabilitar = "background-color: #bbb; border-bottom: #999 3px solid;";
-int cabEstado, animEstado, alarmEstad, advertencia;
-int modulHora, modulTemp, modulHum;
-int horaEstado, horaTipo, horaGuardar, horaDuracionR, horaDuracionT, horaDuracionH, horaBrillo, horaEst, tempEst, humeEst;
-int animAleatorio, animAnimacion, animDuracion;
-int alarmRep, alarmHor, alarmMin, alarmGuard, alarmSilen;
-int mensTipo, mensText, mensDura, mensVelo, mensPausa, mensGuard;
-int modAp, wifi, pass, wifiGuard, fontTipo;
+uint16_t cabEstado, animEstado, alarmEstad, advertencia;
+uint16_t modulHora, modulTemp, modulHum;
+uint16_t horaEstado, horaTipo, climaTipo, horaGuardar, horaDuracionR, horaDuracionT, horaDuracionH, horaBrillo, horaEst, tempEst, humeEst;
+uint16_t animAleatorio, animAnimacion, animDuracion, fontTipo;
+uint16_t alarmRep, alarmHor, alarmMin, alarmGuard, alarmSilen;
+uint16_t mensTipo, mensText, mensDura, mensVelo, mensPausa, mensGuard;
+uint16_t modAp, wifi, pass, wifiGuard, apiOWM, owmCode, owmGuard, apiCMC, cmcCripto1, cmcCripto2, cmcDivisa, cmcGuard;
+#endif
 
 // ========================================
 void setup()
 {
   Wire.begin();
+#if MOD_DHT
   dht.begin();
+#endif
   Serial.begin(115200);
   pinMode(buzzer, OUTPUT);
+#if MICRO
   pinMode(micro, INPUT);
+#endif
   randomSeed(analogRead(A0));
   getDatos();
 
@@ -205,13 +236,17 @@ void setup()
   conexionWifi();
   WiFi.setSleep(false);
 
+#if WEB
   interfazWeb();
+#endif
+#if MOD_DHT
   leerTempDHT();
   leerHumDHT();
+#endif
   tModoAnt = millis();
   tEfectoAnt = millis();
   tRtcAnt = millis();
-  tAntUpdate = millis();
+  tAntUpdate = 0;
 
   Serial.println(F("=============="));
   switch (esp_reset_reason())
@@ -231,7 +266,7 @@ void conexionWifi()
     int connect_timeout = 30;
     WiFi.setHostname(hostname);
     WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid.c_str(), password.c_str());
+    WiFi.begin(llaves.ssid, llaves.password);
 
     Serial.print(F("\nWifi conectando"));
     while (WiFi.status() != WL_CONNECTED && connect_timeout > 0) // MODO CLIENTE
@@ -291,11 +326,12 @@ void modoAP()
 {
   Serial.print("\n\nPunto de acceso");
   memRelojUDP = false;
+  memClimaOWM = false;
 
   WiFi.mode(WIFI_AP);
   delay(100);
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-  WiFi.softAP(hostname);
+  WiFi.softAP(hostname, hostpass);
 
   int connect_timeout = 10;
   do
@@ -306,9 +342,9 @@ void modoAP()
   } while (connect_timeout);
 }
 
+#if WEB
 void interfazWeb()
 {
-#if SERVIDOR
   static char estiloSensores[38];
   strcpy(estiloSensores, "background-color: unset; width: 100%;");
   static char estiloSinColor[45];
@@ -318,7 +354,7 @@ void interfazWeb()
   static char estiloVist[23];
   strcpy(estiloVist, "top: 7px; left: 10px;");
   static char sinMarginB[22];
-  strcpy(sinMarginB, "margin-bottom: 1px;");
+  strcpy(sinMarginB, "margin-bottom: 1px; color: rgba(0, 0, 0, 1);");
   // static String estiloMod = "text-shadow: 2px 2px 2px rgba(0, 0, 0, 0.3); font-size: 60px; background-color: unset; padding-right: 0.1em; padding-left o.1em;";
   static String estiloMod = "text-shadow: 2px 2px 2px rgba(0, 0, 0, 0.3); font-size: 60px; background-color: unset; padding: 1px; margin: 1px;";
 
@@ -327,7 +363,7 @@ void interfazWeb()
   auto tab2 = ESPUI.addControl(Tab, "", "Alarma");
   auto tab3 = ESPUI.addControl(Tab, "", "Animacion");
   auto tab4 = ESPUI.addControl(Tab, "", "Mensaje");
-  auto tab5 = ESPUI.addControl(Tab, "", "Wifi");
+  auto tab5 = ESPUI.addControl(Tab, "", "Creden");
   // ESTADOS--------------------------------------
   String info = memAnimAle ? "Animacion: Aleatorio" : "Animacion: " + catalogo[memAnimEfecto].nombre;
   animEstado = ESPUI.addControl(Label, miIp, info, Turquoise);
@@ -349,17 +385,28 @@ void interfazWeb()
 
   // RELOJ-------------------------------------
   horaEstado = ESPUI.addControl(Switcher, "Encender", "1", Wetasphalt, tab1, webRelojEstado); // Estado Encendido o Apagado
-  horaTipo = ESPUI.addControl(Select, "Hora", "", Emerald, tab1, webRelojTipo);               // Tipo de reloj rtc o ntp
+
+#if RTC
+  horaTipo = ESPUI.addControl(Select, "Hora", "", Emerald, tab1, webRelojTipo); // Tipo de reloj rtc o ntp
   ESPUI.addControl(Option, "Modulo RTC", "O", Alizarin, horaTipo);
   ESPUI.addControl(Option, "Servidor NTP", "1", Alizarin, horaTipo);
   ESPUI.updateSelect(horaTipo, String(memRelojUDP));
+#endif
+
+#if MOD_DHT
+  climaTipo = ESPUI.addControl(Select, "Clima", "", Emerald, tab1, webClimaTipo); // Fuente de datos de temp. y hum.
+  ESPUI.addControl(Option, "Modulo DHT22", "0", Alizarin, climaTipo);
+  ESPUI.addControl(Option, "API openWeatherMap", "1", Alizarin, climaTipo);
+  ESPUI.updateSelect(climaTipo, String(memClimaOWM));
+#endif
 
   horaBrillo = ESPUI.addControl(Slider, "Brillo", "0", Dark, tab1, webRelojBrillo);
   ESPUI.addControl(Min, "", "0", None, horaBrillo);
   ESPUI.addControl(Max, "", "10", None, horaBrillo);
 
+#if RTC
   horaGuardar = ESPUI.addControl(Button, "Modulo RTC DS3231", "Actualizar Datos", Alizarin, tab1, webRelojGuardar); // Guardar nueva hora
-
+#endif
   ESPUI.addControl(Separator, "Tiempo de Visualizacion", "", None, tab1); // Duracion para mostrar los datos
 
   horaDuracionR = ESPUI.addControl(Number, "Visualizacion (Seg)", String(catalogoVista[0].tiempo), Peterriver, tab1, webRelojDuracion);
@@ -418,6 +465,8 @@ void interfazWeb()
   ESPUI.addControl(Min, "", "3", None, animDuracion);
   ESPUI.addControl(Max, "", "120", None, animDuracion);
 
+  fontTipo = ESPUI.addControl(Switcher, "Simple <-- Font --> Doble", String(tipoFont), Wetasphalt, tab3, webFont);
+
   // ALARMA------------------------------------
   ESPUI.addControl(Separator, "Alarma Formato: 24H", "", None, tab2);
   alarmHor = ESPUI.addControl(Number, "Alarma", "00", Peterriver, tab2, webAlarmHora); // Hora de alarma
@@ -470,39 +519,70 @@ void interfazWeb()
   ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Velocidad (ms)", None, mensVelo, webMensVelocidad), estiloSensores);
   ESPUI.addControl(Min, "", "10", None, mensVelo);
   ESPUI.addControl(Max, "", "150", None, mensVelo);
+  ESPUI.setElementStyle(mensVelo, String(sinMarginB));
 
   mensPausa = ESPUI.addControl(Slider, "", "0", Dark, mensVelo, webMensPausa);
   ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Pausa (Seg)", None, mensVelo, webMensPausa), estiloSensores);
   ESPUI.addControl(Min, "", "0", None, mensPausa);
   ESPUI.addControl(Max, "", "60", None, mensPausa);
-  ESPUI.setElementStyle(mensVelo, String(sinMarginB));
   ESPUI.setElementStyle(mensPausa, String(sinMarginB));
-
   mensGuard = ESPUI.addControl(Button, "Mensaje", "Enviar", Alizarin, tab4, webMensEnviar);
-  modAp = ESPUI.addControl(Switcher, "Modo Access Point", String(memModAP), Wetasphalt, tab5, webModoAP);
-  wifi = ESPUI.addControl(Text, "SSID", "", Dark, tab5, webssid);
-  pass = ESPUI.addControl(Text, "Contraseña", "", Dark, tab5, webpass);
-  wifiGuard = ESPUI.addControl(Button, "Actualizar Wifi", "Guardar", Alizarin, tab5, webWifiGuard);
 
-  fontTipo = ESPUI.addControl(Switcher, "Simple <-- Font --> Doble", String(tipoFont), Wetasphalt, tab3, webFont);
+  // CREDENCIALES ------------------------------------
+  modAp = ESPUI.addControl(Switcher, "Modo Access Point", String(memModAP), Wetasphalt, tab5, webModoAP);
+  wifi = ESPUI.addControl(Text, "WiFi", String(llaves.ssid), Dark, tab5, webssid);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "SSID", None, wifi, webssid), estiloSensores);
+  pass = ESPUI.addControl(Text, "Password", String(llaves.password), Dark, wifi, webpass);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Contraseña", None, wifi, webpass), estiloSensores);
+  ESPUI.setElementStyle(wifi, String(sinMarginB));
+  ESPUI.setElementStyle(pass, String(sinMarginB));
+  ESPUI.setInputType(pass, "password");
+  wifiGuard = ESPUI.addControl(Button, "Nuevo WiFi", "Guardar", Alizarin, wifi, webWifiGuard);
+
+  ESPUI.addControl(Separator, "Configuracion de APIs", "", None, tab5);
+  apiOWM = ESPUI.addControl(Text, "OpenWeatherMap", String(llaves.keyWeather), Turquoise, tab5, webApiOWM);
+  ESPUI.setInputType(apiOWM, "password");
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "Api Key", "API Key", None, apiOWM, webApiOWM), estiloSensores);
+  String tmp = String(llaves.city) + "," + llaves.country;
+  owmCode = ESPUI.addControl(Text, "Codigo", tmp, Dark, apiOWM, webOWMCode);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "Codigo", "Codigo", None, apiOWM, webOWMCode), estiloSensores);
+  ESPUI.setElementStyle(apiOWM, String(sinMarginB));
+  ESPUI.setElementStyle(owmCode, String(sinMarginB));
+  owmGuard = ESPUI.addControl(Button, "Nuevos datos", "Guardar", Alizarin, apiOWM, webApiGuard);
+
+  apiCMC = ESPUI.addControl(Text, "CoinMarketCap", String(llaves.keyCripto), Turquoise, tab5, webApiCMC);
+  ESPUI.setInputType(apiCMC, "password");
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "Api Key", "API Key", None, apiCMC, webApiCMC), estiloSensores);
+  cmcCripto1 = ESPUI.addControl(Text, "Cripto 1", String(llaves.criptos[0]), Dark, apiCMC, webCMCCripto1);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Cripto 1", None, apiCMC, webCMCCripto1), estiloSensores);
+  cmcCripto2 = ESPUI.addControl(Text, "Cripto 2", String(llaves.criptos[1]), Dark, apiCMC, webCMCCripto1);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Cripto 2", None, apiCMC, webCMCCripto1), estiloSensores);
+  cmcDivisa = ESPUI.addControl(Text, "Divisa", String(llaves.divisa), Dark, apiCMC, webCMCDivisa);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Divisa", None, apiCMC, webCMCDivisa), estiloSensores);
+  ESPUI.setElementStyle(apiCMC, sinMarginB);
+  ESPUI.setElementStyle(cmcCripto1, String(sinMarginB));
+  ESPUI.setElementStyle(cmcCripto2, String(sinMarginB));
+  ESPUI.setElementStyle(cmcDivisa, String(sinMarginB));
+  cmcGuard = ESPUI.addControl(Button, "Nuevos datos", "Guardar", Alizarin, apiCMC, webApiGuard);
 
   // ESPUI.begin("ESPUI Control", "username", "password") //Seguridad basica.
   ESPUI.begin("ESP32UI MAX7219");
-#endif
 }
+#endif
 
 void getDatos()
 {
   memoria.begin("web", false);
   delay(20);
+
   catalogoVista[0].tiempo = memoria.getInt("tiem0", 10);
   catalogoVista[1].tiempo = memoria.getInt("tiem1", 10);
   catalogoVista[2].tiempo = memoria.getInt("tiem2", 10);
-
   catalogoVista[0].estado = memoria.getBool("horEst", true);
   catalogoVista[1].estado = memoria.getBool("temEst", true);
   catalogoVista[2].estado = memoria.getBool("humEst", true);
   memRelojUDP = memoria.getBool("rTipo", true);
+  memClimaOWM = memoria.getBool("cliTipo", true);
   memAnimAle = memoria.getBool("anAle", true);
   memAnimEfecto = memoria.getInt("anEfec", 1);
   memAnimDuracion = (byte)memoria.getInt("anDura", 10);
@@ -510,15 +590,15 @@ void getDatos()
   memAlarRep = memoria.getBool("alRep", false);
   miAlarma = memoria.getString("miAlarm", "");
   memModAP = memoria.getBool("modoAP", false);
-  ssid = memoria.getString("ssid", "null");
-  password = memoria.getString("pass", "null");
   tipoFont = memoria.getBool("tipFont", true);
+  memoria.getBytes("creden", &llaves, sizeof(llaves));
   memoria.end();
 }
 void setBool(const char *d, bool v)
 {
   memoria.begin("web", false);
   memoria.putBool(d, v);
+  delay(1);
   memoria.end();
 }
 void setInt(const char *d, int v)
@@ -533,9 +613,15 @@ void setString(const char *d, String v)
   memoria.putString(d, v);
   memoria.end();
 }
+void setCred()
+{
+  memoria.begin("web", false);
+  memoria.putBytes("creden", &llaves, sizeof(llaves));
+  memoria.end();
+}
 
 // ========================================
-#if SERVIDOR
+#if WEB
 void webRelojEstado(Control *sender, int value)
 { // Apagado o Encendido
   test(sender, value);
@@ -561,12 +647,20 @@ void webRelojTipo(Control *sender, int value)
   setBool("rTipo", memRelojUDP);
 }
 
+void webClimaTipo(Control *sender, int value)
+{ // OpenWheatherMap o DHT22
+  test(sender, value);
+  memClimaOWM = sender->value.toInt();
+  setBool("cliTipo", memClimaOWM);
+}
+
 void webRelojBrillo(Control *sender, int type)
 { // Cambiar brillo
   test(sender, type);
   P.setIntensity(sender->value.toInt());
 }
 
+#if RTC
 void webRelojGuardar(Control *sender, int type)
 { // Guardar nueva hora RTC
   test(sender, type);
@@ -596,23 +690,24 @@ void webRelojGuardar(Control *sender, int type)
     break;
   }
 }
+#endif
 
 void webRelojDuracion(Control *sender, int value)
 { // Cambiar tiempos de Reloj, Temp y Hum.
   test(sender, value);
   switch (sender->id)
   {
-  case 23:
+  case 22:
     catalogoVista[0].tiempo = sender->value.toInt();
     setInt("tiem0", catalogoVista[0].tiempo);
     break;
 
-  case 28:
+  case 27:
     catalogoVista[1].tiempo = sender->value.toInt();
     setInt("tiem1", catalogoVista[1].tiempo);
     break;
 
-  case 33:
+  case 32:
     catalogoVista[2].tiempo = sender->value.toInt();
     setInt("tiem2", catalogoVista[2].tiempo);
     break;
@@ -801,7 +896,7 @@ void webAlarmGuard(Control *sender, int type)
       setBool("alRep", memAlarRep);
       setString("miAlarm", miAlarma);
 
-#if SERVIDOR
+#if WEB
       ESPUI.updateControlValue(alarmEstad, n);
       ESPUI.updateControlValue(alarmGuard, String("Cancelar alarma").c_str());
       ESPUI.setEnabled(alarmSilen, true);
@@ -947,27 +1042,135 @@ void webModoAP(Control *sender, int value)
 void webssid(Control *sender, int value)
 {
   test(sender, value);
-  ssid = sender->value;
+  String tmp = sender->value;
+  tmp.toCharArray(llaves.ssid, sizeof(llaves.ssid));
 }
 
 void webpass(Control *sender, int value)
 {
   test(sender, value);
-  password = sender->value;
+  String tmp = sender->value;
+  tmp.toCharArray(llaves.password, sizeof(llaves.password));
 }
 
-void webWifiGuard(Control *sender, int value)
+void webWifiGuard(Control *sender, int type)
+{
+  switch (type)
+  {
+  case B_UP:
+    test(sender, type);
+    if (strlen(llaves.ssid) > 3 && strlen(llaves.password) > 7)
+    {
+      setCred();
+      delay(10);
+      setBool("modoAP", false);
+      delay(100);
+      if (WiFi.getMode() == WIFI_AP)
+      {
+        ESP.restart();
+      }
+    }
+    else
+    {
+      cabInfo = "ssid o password no valido";
+      tWebCabAnt = millis();
+    }
+  }
+}
+
+void webApiOWM(Control *sender, int value)
 {
   test(sender, value);
-  if (ssid.length() > 1 && password.length() > 1)
+  String tmp = sender->value;
+
+  if (tmp.length() < 20)
   {
-    // setString("ssid", ESPUI.getControl(wifi)->value);
-    setString("ssid", ssid);
-    delay(2);
-    // setString("pass", ESPUI.getControl(pass)->value);
-    setString("pass", password);
-    delay(1000);
-    ESP.restart();
+    return;
+  }
+  tmp.toCharArray(llaves.keyWeather, sizeof(llaves.keyWeather));
+}
+
+void webOWMCode(Control *sender, int value)
+{
+  test(sender, value);
+  String tmp = sender->value;
+
+  if (tmp.length() < 8)
+  {
+    return;
+  }
+
+  int p1 = tmp.indexOf(',');
+  int p2 = tmp.indexOf(',', p1 + 1);
+
+  String v1, v2;
+  v1 = tmp.substring(0, p1);
+  v2 = tmp.substring(p1 + 1, p2);
+
+  v1.toCharArray(llaves.city, sizeof(llaves.city));
+  v2.toCharArray(llaves.country, sizeof(llaves.country));
+}
+
+void webApiCMC(Control *sender, int value)
+{
+  test(sender, value);
+  String tmp = sender->value;
+
+  if (tmp.length() < 20)
+  {
+    return;
+  }
+  tmp.toCharArray(llaves.keyCripto, sizeof(llaves.keyCripto));
+}
+
+void webCMCCripto1(Control *sender, int value)
+{
+  test(sender, value);
+  String tmp = sender->value;
+
+  if (tmp.length() < 2)
+  {
+    return;
+  }
+  tmp.toCharArray(llaves.criptos[0], sizeof(llaves.criptos[0]));
+}
+
+void webCMCCripto2(Control *sender, int value)
+{
+  test(sender, value);
+  String tmp = sender->value;
+
+  if (tmp.length() < 2)
+  {
+    return;
+  }
+  tmp.toCharArray(llaves.criptos[1], sizeof(llaves.criptos[1]));
+}
+
+void webCMCDivisa(Control *sender, int value)
+{
+  test(sender, value);
+  String tmp = sender->value;
+
+  if (tmp.length() < 2)
+  {
+    return;
+  }
+  tmp.toCharArray(llaves.divisa, sizeof(llaves.divisa));
+}
+
+void webApiGuard(Control *sender, int type)
+{
+  switch (type)
+  {
+  case B_UP:
+    test(sender, type);
+    if (true)
+    {
+      setCred();
+      cabInfo = "Configuracion API guardado";
+      tWebCabAnt = millis();
+    }
   }
 }
 
@@ -1014,7 +1217,7 @@ void test(Control *sender, int type)
 #endif
 
 // ========================================
-#if SERVIDOR
+#if WEB
 void webSiEstado()
 {
   if (millis() - tWebCabAnt < 4 * 1000)
@@ -1061,7 +1264,9 @@ void WebMostrarMsj()
     }
   }
 }
+#endif
 
+#if WEB
 void sonarAlarma()
 {
   if (miAlarma.equals(String(catalogoVista[0].datos)))
@@ -1110,7 +1315,7 @@ void sonarAlarma()
       setBool("alRep", memAlarRep);
       setString("miAlarm", miAlarma);
 
-#if SERVIDOR
+#if WEB
       ESPUI.updateControlValue(alarmRep, String(memAlarRep));
       ESPUI.print(alarmEstad, String("Alarma: Ninguno"));
       ESPUI.updateControlValue(alarmGuard, String("Guardar alarma").c_str());
@@ -1142,7 +1347,7 @@ void modoRtc()
         hora.toCharArray(miHoraV, 6); // 00_00
         strcpy(miHoraAnt, catalogoVista[0].datos);
 
-#if SERVIDOR
+#if WEB
         ESPUI.print(modulHora, catalogoVista[0].datos);
 #endif
 
@@ -1221,7 +1426,7 @@ void modoUdp()
     miHora.toCharArray(miHoraV, 6); // 00_00
     strcpy(miHoraAnt, catalogoVista[0].datos);
 
-#if SERVIDOR
+#if WEB
     ESPUI.print(modulHora, catalogoVista[0].datos);
 #endif
 
@@ -1231,28 +1436,21 @@ void modoUdp()
   }
 }
 
+#if MOD_DHT
 void leerTempDHT()
 {
   String temperature;
-  // String hi;
   float t = dht.readTemperature() + (calibTemp);
-  // float hic = dht.computeHeatIndex(t, dht.readHumidity(), false);
   if (isnan(t))
   {
-    temperature = "00.00";
-    // hi = "00.00";
-    snprintf(catalogoVista[1].datos, 6, "00.0&");
+    t = 00.0;
     cabInfo = "Error de lectura temperatura.";
     tWebCabAnt = millis();
   }
-  else
-  {
-    snprintf(catalogoVista[1].datos, 6, "%.1f&", t);
-    temperature = String(t, 1) + "°C";
-    // hi = String(hic, 1) + "°C";
-  }
+  snprintf(catalogoVista[1].datos, 6, "%.1f&", t);
 
-#if SERVIDOR
+#if WEB
+  temperature = String(t, 1) + "°C";
   ESPUI.print(modulTemp, temperature);
 #endif
 }
@@ -1268,9 +1466,132 @@ void leerHumDHT()
   }
   snprintf(catalogoVista[2].datos, 6, "%.1f%s", h, "%");
 
-#if SERVIDOR
+#if WEB
   ESPUI.print(modulHum, catalogoVista[2].datos);
 #endif
+}
+#endif
+
+String httpGETRequest(const char *serverName)
+{
+  WiFiClient client;
+  HTTPClient http;
+
+  if (!http.begin(client, serverName))
+  {
+    Serial.println("Error al iniciar la conexión HTTP/S.");
+    return "{}";
+  }
+
+  int httpResponseCode = http.GET();
+  String payload = "{}";
+
+  if (httpResponseCode > 0)
+  {
+    Serial.print("HTTP Response code: ");
+    Serial.println(httpResponseCode);
+    payload = http.getString();
+  }
+  else
+  {
+    Serial.print("Error code: ");
+    Serial.println(httpResponseCode);
+  }
+
+  http.end();
+  return payload;
+}
+
+unsigned long tAntClimaUpd = 0;
+void leer_OpenWeatherMap()
+{
+  unsigned long tActual = millis();
+  if (tActual - tAntClimaUpd >= 20000) // 20 seg
+  {
+    if (WiFi.status() != WL_CONNECTED)
+    {
+      Serial.println("Sin conexión WiFi");
+      return;
+    }
+
+    String city = String(llaves.city);
+    city.replace(" ", "%20");
+
+    String serverPath = "http://api.openweathermap.org/data/2.5/weather?q=" + city + "," + String(llaves.country) + "&units=metric&APPID=" + String(llaves.keyWeather);
+    jsonBuffer = httpGETRequest(serverPath.c_str());
+    // Serial.println(serverPath);
+    // Serial.println(jsonBuffer);
+    JSONVar data = JSON.parse(jsonBuffer);
+
+    float t = NAN;
+    float h = NAN;
+    if (JSON.typeof(data) != "undefined")
+    {
+      t = (double)data["main"]["temp"];
+      h = (double)data["main"]["humidity"];
+    }
+
+    if (isnan(t) || isnan(h))
+    {
+      t = 00.0;
+      h = 00.0;
+      cabInfo = "Error de openWeatherMap";
+      tWebCabAnt = millis();
+    }
+
+    snprintf(catalogoVista[1].datos, 6, "%.1f&", t);
+    snprintf(catalogoVista[2].datos, 6, "%.1f%s", h, "%");
+
+#if WEB
+    String temperature = String(t, 1) + "°C";
+    ESPUI.print(modulTemp, temperature);
+    ESPUI.print(modulHum, catalogoVista[2].datos);
+#endif
+    tAntClimaUpd = tActual;
+  }
+}
+
+unsigned long tAntCriptUpd = 0;
+void leerCripto()
+{
+  unsigned long tActual = millis();
+  if (tActual - tAntCriptUpd >= 300000) // 5 min.
+  {
+    HTTPClient http;
+
+    // Construimos la URL dinámica con los símbolos que pasaste
+    String apiUrl = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=" + String(llaves.criptos[0]) + "," + String(llaves.criptos[1]) + "&convert=" + String(llaves.divisa);
+
+    http.begin(apiUrl);
+    http.addHeader("Accepts", "application/json");
+    http.addHeader("X-CMC_PRO_API_KEY", String(llaves.keyCripto));
+
+    int httpCode = http.GET();
+    if (httpCode > 0)
+    {
+      String payload = http.getString();
+      JSONVar data = JSON.parse(payload);
+
+      if (JSON.typeof(data) == "undefined")
+      {
+        Serial.println("Error al parsear JSON");
+        return;
+      }
+      float crypto1, crypto2;
+      crypto1 = double(data["data"][String(llaves.criptos[0])]["quote"][String(llaves.divisa)]["price"]);
+      crypto2 = double(data["data"][String(llaves.criptos[1])]["quote"][String(llaves.divisa)]["price"]);
+
+      Serial.printf("(%s): $%.2f USD\n", llaves.criptos[0], crypto1);
+      Serial.printf("(%s): $%.2f USD\n", llaves.criptos[1], crypto2);
+    }
+    else
+    {
+      Serial.printf("Error HTTP: %s\n", http.errorToString(httpCode).c_str());
+    }
+    http.end();
+
+    tAntCriptUpd = tActual;
+  }
 }
 
 void cambiarEfecto()
@@ -1336,6 +1657,7 @@ int cambiarPantalla()
   return modo;
 }
 
+#if MICRO
 void microfono()
 {
   static unsigned long tAntAplau = millis();
@@ -1364,6 +1686,7 @@ void microfono()
     }
   }
 }
+#endif
 
 bool btnEncoder()
 {
@@ -1419,7 +1742,7 @@ int selectTemp(int est)
   return est;
 }
 
-String obtenerTemp(int est)
+String obtenerTempr(int est)
 {
   char buffer[7];
   bool sMin = (est == 99);
@@ -1497,119 +1820,123 @@ String contaTempr()
 void loop()
 {
   static String dato;
-  if ((millis() - tAntUpdate) > 3000)
+  if ((millis() - tAntUpdate) > 2000)
   {
-    leerTempDHT();
-    leerHumDHT();
+    clima();
+    leerCripto();
     memRelojUDP ? modoUdp() : modoRtc();
     tAntUpdate = millis();
   }
-  (millis() < tAntUpdate) ? ESP.restart() : (void)0;
 
-  if (memEncendido)
+  if (!memEncendido)
   {
-    memAlarActiv ? sonarAlarma() : (void)0;
-#if SERVIDOR
-    cabInfo.length() > 0 ? webSiEstado() : (void)0;
+    return;
+  }
+
+#if WEB
+  cabInfo.length() > 0 ? webSiEstado() : (void)0;
+  memAlarActiv ? sonarAlarma() : (void)0;
+#endif
+#if MICRO
+  !sonando ? microfono() : (void)0;
 #endif
 
-    !sonando ? microfono() : (void)0;
-    if (P.displayAnimate() && !sonando)
+  // ------------------
+  if (P.displayAnimate() && !sonando)
+  {
+    if (memMensaEst)
     {
-      if (memMensaEst)
-      {
-#if SERVIDOR
-        WebMostrarMsj();
+#if WEB
+      WebMostrarMsj();
 #endif
-      }
-      else
+    }
+    else
+    {
+      cambiarEfecto();
+      switch (cambiarPantalla())
       {
-        cambiarEfecto();
-        switch (cambiarPantalla())
+      case 0: // ====> RELOJ
+        if (rInicio)
+        { // inicio
+          dato = String(catalogoVista[modo].datos);
+          P.displayText(dato.c_str(), PA_CENTER, catalogo[miEfecto].velocidad, 600, catalogo[miEfecto].efecto, PA_NO_EFFECT);
+          rInicio = false;
+        }
+        else
+        { // segundero
+          if (segundero)
+          {
+            dato = String(miHoraV);
+            P.displayText(dato.c_str(), PA_CENTER, 0, 600, PA_NO_EFFECT, PA_NO_EFFECT);
+          }
+          else
+          {
+            dato = String(catalogoVista[0].datos);
+            P.displayText(dato.c_str(), PA_CENTER, 0, 600, PA_NO_EFFECT, PA_NO_EFFECT);
+          }
+          segundero = !segundero;
+        }
+        break;
+
+      case 1: // ====> TEMPERATURA
+        if (rFin && catalogoVista[0].estado)
+        { // fin
+          if (segundero)
+          {
+            dato = String(miHoraV);
+            P.displayText(dato.c_str(), PA_CENTER, catalogo[miEfecto].velocidad, 600, PA_NO_EFFECT, catalogo[miEfecto].efecto);
+          }
+          else
+          {
+            dato = String(catalogoVista[0].datos);
+            P.displayText(dato.c_str(), PA_CENTER, catalogo[miEfecto].velocidad, 600, PA_NO_EFFECT, catalogo[miEfecto].efecto);
+          }
+          rFin = false;
+        }
+        else
         {
-        case 0: // ====> RELOJ
-          if (rInicio)
-          { // inicio
-            dato = String(catalogoVista[modo].datos);
-            P.displayText(dato.c_str(), PA_CENTER, catalogo[miEfecto].velocidad, 600, catalogo[miEfecto].efecto, PA_NO_EFFECT);
-            rInicio = false;
-          }
-          else
-          {
-            if (segundero)
-            {
-              dato = String(miHoraV);
-              P.displayText(dato.c_str(), PA_CENTER, 0, 600, PA_NO_EFFECT, PA_NO_EFFECT);
-            }
-            else
-            {
-              dato = String(catalogoVista[0].datos);
-              P.displayText(dato.c_str(), PA_CENTER, 0, 600, PA_NO_EFFECT, PA_NO_EFFECT);
-            }
-            segundero = !segundero;
-          }
-          break;
-
-        case 1: // ====> TEMPERATURA
-          if (rFin && catalogoVista[0].estado)
-          { // fin
-            if (segundero)
-            {
-              dato = String(miHoraV);
-              P.displayText(dato.c_str(), PA_CENTER, catalogo[miEfecto].velocidad, 600, PA_NO_EFFECT, catalogo[miEfecto].efecto);
-            }
-            else
-            {
-              dato = String(catalogoVista[0].datos);
-              P.displayText(dato.c_str(), PA_CENTER, catalogo[miEfecto].velocidad, 600, PA_NO_EFFECT, catalogo[miEfecto].efecto);
-            }
-            rFin = false;
-          }
-          else
-          {
-            dato = catalogoVista[modo].datos;
-            P.displayText(dato.c_str(), PA_CENTER, catalogo[miEfecto].velocidad, catalogoVista[modo].tiempo * 1000, catalogo[miEfecto].efecto, catalogo[miEfecto].efecto);
-          }
-          break;
-
-        case 2: // ====> HUMEDAD
           dato = catalogoVista[modo].datos;
           P.displayText(dato.c_str(), PA_CENTER, catalogo[miEfecto].velocidad, catalogoVista[modo].tiempo * 1000, catalogo[miEfecto].efecto, catalogo[miEfecto].efecto);
+        }
+        break;
+
+      case 2: // ====> HUMEDAD
+        dato = catalogoVista[modo].datos;
+        P.displayText(dato.c_str(), PA_CENTER, catalogo[miEfecto].velocidad, catalogoVista[modo].tiempo * 1000, catalogo[miEfecto].efecto, catalogo[miEfecto].efecto);
+        break;
+
+      case 3:
+        dato = String(miIp);
+        P.displayText(dato.c_str(), PA_CENTER, catalogo[3].velocidad + 15, 0, catalogo[3].efecto, catalogo[3].efecto);
+        tModoAnt = millis();
+        break;
+
+      case 4: // ====> TEMPORIZADOR
+        estadTemp = selectTemp(estadTemp);
+        switch (estadTemp)
+        {
+        case 0:
+          dato = obtenerTempr(99);
+          P.displayText(dato.c_str(), PA_CENTER, 0, 0, PA_NO_EFFECT, PA_NO_EFFECT);
+          break;
+
+        case 1:
+          dato = obtenerTempr(59);
+          P.displayText(dato.c_str(), PA_CENTER, 0, 0, PA_NO_EFFECT, PA_NO_EFFECT);
+          break;
+
+        case 2:
+          dato = contaTempr();
+          P.displayText(dato.c_str(), PA_CENTER, 0, 0, PA_NO_EFFECT, PA_NO_EFFECT);
           break;
 
         case 3:
-          dato = String(miIp);
-          P.displayText(dato.c_str(), PA_CENTER, catalogo[3].velocidad + 15, 0, catalogo[3].efecto, catalogo[3].efecto);
-          tModoAnt = millis();
-          break;
-
-        case 4: // ====> TEMPORIZADOR
-          estadTemp = selectTemp(estadTemp);
-          switch (estadTemp)
-          {
-          case 0:
-            dato = obtenerTemp(99);
-            P.displayText(dato.c_str(), PA_CENTER, 0, 0, PA_NO_EFFECT, PA_NO_EFFECT);
-            break;
-
-          case 1:
-            dato = obtenerTemp(59);
-            P.displayText(dato.c_str(), PA_CENTER, 0, 0, PA_NO_EFFECT, PA_NO_EFFECT);
-            break;
-
-          case 2:
-            dato = contaTempr();
-            P.displayText(dato.c_str(), PA_CENTER, 0, 0, PA_NO_EFFECT, PA_NO_EFFECT);
-            break;
-
-          case 3:
-            digitalWrite(buzzer, LOW);
-            modoTemp = false;
-            modo = 0;
-            break;
-          }
+          digitalWrite(buzzer, LOW);
+          modoTemp = false;
+          modo = 0;
           break;
         }
+        break;
       }
     }
   }
@@ -1621,5 +1948,21 @@ void loop()
     modoTemp = true;
     estadTemp = 0;
     modo = 4;
+  }
+}
+
+// ----------------------------------------
+void clima()
+{
+  if (memClimaOWM)
+  {
+    leer_OpenWeatherMap();
+  }
+  else
+  {
+#if MOD_DHT
+    leerTempDHT();
+    leerHumDHT();
+#endif
   }
 }

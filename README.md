@@ -61,9 +61,10 @@ Este proyecto consiste en un reloj digital desarrollado con un **ESP32**, que ut
 
 - x1 **ESP32 Dev Module**
 - x1 Pantalla matriz 8x32 **MAX7219**
-- x1 Modulo sensor **DHT22**
+- x1 Modulo sensor **DHT22**(opcional)
 - x1 Módulo RTC **DS3231** (opcional)
-- x1 Encoder rotatorio
+- x1 Modulo de sonido **KY-038** (opcional)
+- x1 Modulo Encoder rotatorio
 - x1 Módulo conversor lógico **4CH**
 - x1 Zumbador piezoeléctrico
 - x1 Transistor NPN **BC548**
