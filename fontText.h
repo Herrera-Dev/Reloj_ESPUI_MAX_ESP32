@@ -5,8 +5,7 @@
 #pragma once
 
 // clang-format off
-MD_MAX72XX::fontType_t ASCII_Simp[] PROGMEM = 
-{
+MD_MAX72XX::fontType_t ASCII_Simp[] PROGMEM = {
 	0, 	// 0 - 'Unused'
 	0, 	// 1 - 'Unused'
 	0, 	// 2 - 'Unused'
@@ -52,10 +51,10 @@ MD_MAX72XX::fontType_t ASCII_Simp[] PROGMEM =
 	5, 42, 28, 127, 28, 42, 	// 42 - '*'
 	5, 8, 8, 62, 8, 8, 	// 43 - '+'
 	3, 128, 96, 0, 	// 44'
-	5, 8, 8, 8, 8, 8, 	// 45 - '-'
-	1, 64, 	// 46 - '.' Editado
+	2, 8, 8, 	// 45 - '-' Modificado
+	1, 64, 	// 46 - '.' Modificado
 	5, 32, 16, 8, 4, 2, 	// 47 - '/'
-    5, 62, 65, 65, 65, 62, 	// 48  - '0' Modificado
+  5, 62, 65, 65, 65, 62, 	// 48  - '0' Modificado
 	3, 66, 127, 64, 	// 49 - '1'
 	5, 114, 73, 73, 73, 70, 	// 50 - '2'
 	5, 33, 65, 73, 77, 51, 	// 51 - '3'
@@ -131,7 +130,7 @@ MD_MAX72XX::fontType_t ASCII_Simp[] PROGMEM =
 	5, 76, 144, 144, 144, 124, 	// 121 - 'y'
 	5, 68, 100, 84, 76, 68, 	// 122 - 'z'
 	3, 8, 54, 65, 	// 123 - '{'
-	1, 119, 	// 124 - '|'
+  1, 127, 	// 124 - '|' Modificado
 	3, 65, 54, 8, 	// 125 - '}'
 	5, 2, 1, 2, 4, 2, 	// 126 - '~'
 	0, 	// 127 - 'Unused'

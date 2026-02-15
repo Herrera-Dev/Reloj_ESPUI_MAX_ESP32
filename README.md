@@ -43,7 +43,7 @@ Este proyecto consiste en un reloj digital desarrollado con un **ESP32**, que ut
 - **IDE:** Arduino `v2.3.x`
 - **Framework:** Arduino ESP32 `v2.0.17`
 - **Board:** ESP32 Dev Module
-- **Partition:** Default 4MB with spiffs(1.2MB APP/1.5MB SPIFFS)
+- **Partition:** Minimal SPIFFS(1.9MB APP with OTA/190KB SPIFFS)
 
 ### Librerías
 

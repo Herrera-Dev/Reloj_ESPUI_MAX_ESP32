@@ -1,0 +1,190 @@
+{
+  "sports_results": {
+    "title": "FC Barcelona",
+    "rankings": "1st in La Liga",
+    "thumbnail": "https://serpapi.com/searches/6988a6ce2713325dd38d16d6/images/8thWjVzxXcSHkt4jYm5nKrn4w3oq7GUNMTbYpNmdtHY.png",
+    "game_spotlight": {
+      "league": "La Liga",
+      "stadium": "Camp Nou",
+      "stadium_kgmid": "/m/01ggjl",
+      "date": "yesterday, 11:15 AM",
+      "status": "Full-time",
+      "video_highlight_carousel": [
+        {
+          "title": "Match recap",
+          "link": "https://www.youtube.com/watch?v=e31QoWlxPqk&feature=onebox",
+          "duration": "3:13",
+          "thumbnail": "https://ssl.gstatic.com/onebox/media/sports/videos/vita/V308QjdMz3pB4VOx_768x432.jpg"
+        },
+        {
+          "title": "Match recap",
+          "link": "https://www.dazn.com/highlight/1pmyo6m4p4wfd180hm70vq6j69?utm_source=onebox&utm_medium=organic&utm_campaign=BarcelonavMallorca&utm_term=highlights&utm_content=LaLiga",
+          "duration": "4:20",
+          "thumbnail": "https://ssl.gstatic.com/onebox/media/sports/videos/vita/PXWdkK-Qkh8Sgo1F_768x432.jpg"
+        },
+        {
+          "title": "Match recap",
+          "link": "https://stories.laliga.com/games/698758abd67240a380a9fb7b.html",
+          "thumbnail": "https://ssl.gstatic.com/onebox/media/sports/videos/vita/676rGzwxeCRiYqPd_768x432.jpg"
+        }
+      ],
+      "teams": [
+        {
+          "name": "Barcelona",
+          "thumbnail": "https://ssl.gstatic.com/onebox/media/sports/logos/paYnEE8hcrP96neHRNofhQ_96x96.png",
+          "kgmid": "/m/0hvgt",
+          "score": "3",
+          "goal_summary": [
+            {
+              "player": {
+                "name": "Robert Lewandowski",
+                "jersey_number": "9",
+                "position": "Striker"
+              },
+              "goals": [
+                {
+                  "in_game_time": {
+                    "minute": 29,
+                    "second": 0,
+                    "stoppage": 0
+                  }
+                }
+              ]
+            },
+            {
+              "player": {
+                "name": "Lamine Yamal",
+                "jersey_number": "10",
+                "position": "Striker"
+              },
+              "goals": [
+                {
+                  "in_game_time": {
+                    "minute": 61,
+                    "second": 0,
+                    "stoppage": 0
+                  }
+                }
+              ]
+            },
+            {
+              "player": {
+                "name": "Marc Bernal",
+                "jersey_number": "22",
+                "position": "Midfielder"
+              },
+              "goals": [
+                {
+                  "in_game_time": {
+                    "minute": 83,
+                    "second": 0,
+                    "stoppage": 0
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Mallorca",
+          "thumbnail": "https://ssl.gstatic.com/onebox/media/sports/logos/Ss21P4CUmigjrEtcoapjVg_96x96.png",
+          "kgmid": "/m/01vqc7",
+          "score": "0"
+        }
+      ],
+      "venue": "Camp Nou"
+    },
+    "games": [
+      {
+        "tournament": "Copa del Rey",
+        "stage": "Semi-final · Leg 1 of 2",
+        "date": "Thu, Feb 12",
+        "time": "4:00 PM",
+        "teams": [
+          {
+            "name": "Atlético Madrid",
+            "kgmid": "/m/0lg7v"
+          },
+          {
+            "name": "Barcelona",
+            "kgmid": "/m/0hvgt"
+          }
+        ]
+      },
+      {
+        "tournament": "LaLiga",
+        "venue": "Montilivi",
+        "venue_kgmid": "/m/04q2fjg",
+        "date": "Mon, Feb 16",
+        "time": "4:00 PM",
+        "teams": [
+          {
+            "name": "Girona",
+            "kgmid": "/m/0cs8sb"
+          },
+          {
+            "name": "Barcelona",
+            "kgmid": "/m/0hvgt"
+          }
+        ]
+      }
+    ],
+    "league": {
+      "name": "La Liga",
+      "standings": [
+        {
+          "team": {
+            "thumbnail": "https://serpapi.com/searches/6988a6ce2713325dd38d16d6/images/_YMoRSz4BlAZXW0QBMH9jxox-O169TrD7aKeXtmC4TqQwTStPRsn0sCuPR5fIQ3-VliyLDmwUPBjwy6qBhkDLw.png",
+            "name": "Barcelona"
+          },
+          "pos": "1",
+          "mp": "23",
+          "w": "19",
+          "d": "1",
+          "l": "3",
+          "gd": "40",
+          "pts": "58"
+        },
+        {
+          "team": {
+            "thumbnail": "https://serpapi.com/searches/6988a6ce2713325dd38d16d6/images/_YMoRSz4BlAZXW0QBMH9jxox-O169TrD7aKeXtmC4ToCY4yu99l7J5zWQLXMrcQpKaqu1tRKLRf96J-sdcm6IA.png",
+            "name": "Real Madrid"
+          },
+          "pos": "2",
+          "mp": "22",
+          "w": "17",
+          "d": "3",
+          "l": "2",
+          "gd": "29",
+          "pts": "54"
+        },
+        {
+          "team": {
+            "thumbnail": "https://serpapi.com/searches/6988a6ce2713325dd38d16d6/images/_YMoRSz4BlAZXW0QBMH9jxox-O169TrD7aKeXtmC4TqQaAiNrOFzOZhjY9Dn6fj8tUBIfucHNQAhwBnHsH7GnA.png",
+            "name": "Atlético Madrid"
+          },
+          "pos": "3",
+          "mp": "22",
+          "w": "13",
+          "d": "6",
+          "l": "3",
+          "gd": "21",
+          "pts": "45"
+        },
+        {
+          "team": {
+            "thumbnail": "https://serpapi.com/searches/6988a6ce2713325dd38d16d6/images/_YMoRSz4BlAZXW0QBMH9jxox-O169TrD7aKeXtmC4Toygy-HUJ70iLgJBwRYLRo1QKMCUXLV0TTJU7PaFo7a2A.png",
+            "name": "Villarreal"
+          },
+          "pos": "4",
+          "mp": "21",
+          "w": "13",
+          "d": "3",
+          "l": "5",
+          "gd": "16",
+          "pts": "42"
+        }
+      ]
+    }
+  }
+}

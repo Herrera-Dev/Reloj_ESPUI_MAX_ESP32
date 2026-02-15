@@ -15,10 +15,7 @@ void InitOTA()
 
   ArduinoOTA.onEnd([]()
                    { 
-    Serial.println("\nEnd"); 
-    mem.begin("memory", false);
-    mem.putString("error", "OTA_UPLOADING_OK");
-    mem.end();
+    Serial.println("\nEnd");
     ESP.restart(); });
 
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
@@ -26,23 +23,8 @@ void InitOTA()
 
   ArduinoOTA.onError([](ota_error_t error)
                      {
-      mem.begin("memory", false);
-      Serial.printf("Error[%u]: ", error);
-      if (error == OTA_AUTH_ERROR) {
-        mem.putString("error", "OTA_AUTH_ERROR");
-      } else if (error == OTA_BEGIN_ERROR) {
-        mem.putString("error", "OTA_BEGIN_ERROR");
-      } else if (error == OTA_CONNECT_ERROR) {
-        mem.putString("error", "OTA_CONNECT_ERROR");
-      } else if (error == OTA_RECEIVE_ERROR) {
-        mem.putString("error", "OTA_RECEIVE_ERROR");
-      } else if (error == OTA_END_ERROR) {
-        mem.putString("error", "OTA_END_ERROR");
-      }
-      mem.end();
       delay(10);
-      ESP.restart();}
-      );
+      ESP.restart(); });
 
   ArduinoOTA.begin();
   Serial.println("");

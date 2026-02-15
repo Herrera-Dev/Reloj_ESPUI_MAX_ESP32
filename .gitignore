@@ -1,4 +1,6 @@
 # Ignorar todas las carpetas ocultas
 .*/
+espUI_helpers.cpp.txt
+espUI_helpers.h.txt
 # Ignorar archivos
 
