@@ -1,35 +1,13 @@
 
 // -------------------------------------------------------
-#define DEBUG 1
-#define WEB 1     // EspUI Web
-#define RTC 0     // Modulo RTC DS3231
-#define MICRO 1   // Modulo de sonido KY-037
-#define MOD_DHT 1 // Modulo DHT22
-#define OTA 1     // Habilitar OTA
-#define ENCODER 0 // Habilitar encoder del temporizador
+#define WEB 1       // EspUI Web
+#define MOD_RTC 1   // Modulo RTC DS3231
+#define MOD_DHT 1   // Modulo DHT22
+#define MOD_MICRO 1 // Modulo de sonido KY-037
+#define OTA 1       // Habilitar OTA
+#define ENCODER 0   // Habilitar encoder para el temporizador
 
-const uint8_t CALIB_VELEFFECT = 4; // Calibrar velocidad de todos los efectos de entrada y salida
-const int UPDTIME_OWM = 300000;    // 5 min. -> actualizar api OpenWeatherMap (Plan free)
-const int UPDTIME_CMC = 300000;    // 5 min. -> actualizar api CoinMarketCap (Plan free)
-const int UPDTIME_SA = 300000;     // 5 min. -> actualizar api SearpApi (Plan free)
-
-struct traducion
-{
-  const char *fuent;
-  const char *translate;
-};
-const traducion dic[] = { // Traducin del dia
-    {"today", "hoy"},
-    {"tomorrow", "manana"},
-    {"Mon", "Lun"},
-    {"Tue", "Mar"},
-    {"Wed", "Mie"},
-    {"Thu", "Jue"},
-    {"Fri", "Vie"},
-    {"Sat", "Sab"},
-    {"Sun", "Dom"}};
 // -------------------------------------------------------
-
 #if OTA
 #include <ArduinoOTA.h>
 #include "config_OTA.hpp"
@@ -38,14 +16,15 @@ const traducion dic[] = { // Traducin del dia
 #if WEB
 #include <ESPUI.h>
 #endif
+#include <ArduinoJson.h>
 
 #include "time.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ESPmDNS.h>
 #include <Wire.h>
-#include <Arduino_JSON.h>
-#if RTC
+
+#if MOD_RTC
 #include "RTClib.h"
 #endif
 #include "SPI.h"
@@ -54,7 +33,7 @@ const traducion dic[] = { // Traducin del dia
 #include <DHT.h>
 #endif
 #include <Preferences.h>
-Preferences memoria;
+Preferences mem;
 
 #include "fontText.h"
 #include "pixel_Art.h"
@@ -67,6 +46,11 @@ Preferences memoria;
 
 MD_Parola P = MD_Parola(HARDWARE_TYPE, DATA_PIN, CLK_PIN, CS_PIN, MAX_DEVICES);
 // Edit font: Grados --> &, Espacio --> _
+
+const uint8_t CALIB_VELEFFECT = 4; // Calibrar velocidad de todos los efectos de entrada y salida
+const int UPDTIME_OWM = 300000;    // 5 min. -> actualizar api OpenWeatherMap (Plan free)
+const int UPDTIME_CMC = 300000;    // 5 min. -> actualizar api CoinMarketCap (Plan free)
+const int UPDTIME_SA = 300000;     // 5 min. -> actualizar api SerpApi (Plan free)
 
 IPAddress miIP(192, 168, 6, 1);
 const char *mdns = "espui";             // Web: http://espui.local/
@@ -130,18 +114,34 @@ struct creden
   char ssid[15];
   char password[20];
   char keyCripto[45];  // API CoinMarketCap --> https://pro.coinmarketcap.com/
-  char criptos[2][6];  // ejm: BTC, ETH
+  char criptos[2][6];  // Ejm: BTC, ETH
   char divisa[6];      // Ejm: USD, EUR, ARS, MXN
   char keyWeather[40]; // API openWeatherMap --> https://home.openweathermap.org/users/sign_in
-  char city[27];       // Ejm: New York,US - London,GB - Madrid,ES --> https://openweathermap.org/
-  char equipo[50];     // Fútbol Club Barcelona, Real Madrid Club de Fútbol
-  char location[30];   // london,uk, madrid,spain
+  char city[27];       // Ejm: New York,US - London,GB - Madrid,ES --> supported location: https://openweathermap.org/
+  char equipo[50];     // Ejm: Futbol Club Barcelona, Real Madrid Club de Fútbol
+  char location[30];   // Ejm: Mexico City,Mexico City,Mexico | New York,New York,United States --> supported location: https://serpapi.com/locations-api
   char api_key[2][70];
 };
-creden miLlave = {"vacio", "vacio", "vacio", {"BTC", "ETH"}, "USD", "vacio", "London,GB", "vacio", "madrid,Spain", {"vacio", "vacio"}};
+creden miLlave = {"vacio", "vacio", "vacio", {"BTC", "ETH"}, "USD", "vacio", "London,GB", "vacio", "Mexico City,Mexico", {"vacio", "vacio"}};
 tiempo miTiempo = {0, 0, 1, 1, false}; // default
 
-// SEARPAPI FUTBOL
+// SERPAPI FUTBOL
+struct traducion
+{
+  const char *fuent;
+  const char *translate;
+};
+const traducion dic[] = { // Traducir EN -> ESP
+    {"today", "Hoy"},
+    {"tomorrow", "Man"},
+    {"mon", "Lun"},
+    {"tue", "Mar"},
+    {"wed", "Mie"},
+    {"thu", "Jue"},
+    {"fri", "Vie"},
+    {"sat", "Sab"},
+    {"sun", "Dom"}};
+
 enum partidoEst : uint8_t
 {
   FX,
@@ -172,10 +172,13 @@ struct futbol
   uint8_t fechaMinuto; // "45"
 };
 futbol fxInfo;
-uint16_t countSA = 0;
+uint8_t countSA = 0;
+uint8_t restSA = 250;
+uint8_t velocSA = 0;
+bool flagSA = false;
 
 // MICROFONO
-#if MICRO
+#if MOD_MICRO
 #define micro 35
 #endif
 
@@ -192,11 +195,11 @@ const float calibTemp = -0.60;
 #endif
 
 // RELOJ
-#if RTC
+#if MOD_RTC
 RTC_DS3231 rtc;
 #endif
 bool is12h = false;      // formato 12H o 24H
-int8_t memHours = -4;    // desfase UTM -4, -3, etc.
+int8_t memHours = -4;    // desfase UTC -4, -3, etc.
 int8_t memDaylight = 0;  // hora de verano
 bool memRelojUDP = true; // NVC 0=RTC, 1=UDP
 
@@ -249,22 +252,23 @@ modV catVista[] = {
     {"0", 15, true}  // Humedad
 };
 
-struct modVC
+struct modV_CMC
 {
   char datos[18];
+  uint8_t veloc;
   bool estado;
 };
-modVC catCrypto[] = {
-    {"0", true}, // Crypto 1
-    {"0", true}  // Crypto 2
+modV_CMC catCrypto[] = {
+    {"0", 20, true}, // Crypto 1
+    {"0", 20, true}  // Crypto 2
 };
 
-struct modVD
+struct modV_SA
 {
   int veloc;
   int estado;
 };
-modVD catDeport[] = {
+modV_SA catDeport[] = {
     {7, false} // Futbol
 };
 
@@ -301,109 +305,99 @@ unsigned long tAntCriptUpd;
 // ========================================
 #if WEB
 static const char deshabilitar[] = "background-color: #bbb; border-bottom: #999 3px solid;";
-uint16_t cabEstado, animEstado, alarmEstad;
-uint16_t horaEstado, horaTipo, climaTipo, horaDuracionR, horaDuracionT, horaDuracionH, horaBrillo, horaEst, tempEst, humeEst, crypto1, crypto2, deport1;
-uint16_t animAleatorio, animEfecto, animDuracion, fontTipo, btnRTC;
+uint16_t cabEstado;
+uint16_t horaEstado, horaTipo, climaTipo, horaDuracionR, horaDuracionT, horaDuracionH, horaBrillo, horaEst, tempEst, humeEst, crypto1, crypto2, deport1, criptoVel, futbolVel;
+uint16_t animAleatorio, animEfecto, animDuracion, btnRTC, desfUTC, horVer;
 uint16_t alarmRep, alarmHor, alarmGuard, alarmSilen;
 uint16_t mensTipo, mensText, mensDura, mensVelo, mensPausa, mensGuard;
 uint16_t ota, modAp, wifi, pass, wifiGuard, apiOWM, owmCode, owmGuard, apiCMC, cmcCripto1, cmcCripto2, cmcDivisa, cmcGuard;
 uint16_t teamSA, locationSA, key1SA, key2SA, guardSA;
 
 // ---------------------------------------
-void web_EspUI()
+void setupESPUI()
 {
   static const char estiloInfo[] = "background-color: unset; margin-bottom: 0px;"; // estado de info fondo y separacion
-  static const char fondoLabels[] = "background-color: unset;";                    // sobre labels
-  static const char estiloVist[] = "top: 7px; left: 10px;";                        // sobre switchs
-  static const char sinMarginB[] = "margin-bottom: 1px; color: rgba(0, 0, 0, 1);";
+  static const char labelsPer[] = "background-color: unset; width: 100%;";         // sobre labels
+  static const char inputColor[] = "color: rgba(0, 0, 0, 1); margin-bottom: .3rem;";
 
+  uint16_t tab0 = ESPUI.addControl(Tab, "", "Vista");
   uint16_t tab1 = ESPUI.addControl(Tab, "", "Pantalla");
   uint16_t tab3 = ESPUI.addControl(Tab, "", "Efectos");
   uint16_t tab2 = ESPUI.addControl(Tab, "", "Alarma");
   uint16_t tab4 = ESPUI.addControl(Tab, "", "Texto");
-  uint16_t tab5 = ESPUI.addControl(Tab, "", "Api");
+  uint16_t tab5 = ESPUI.addControl(Tab, "", "APIs");
   uint16_t tab6 = ESPUI.addControl(Tab, "", "WiFi");
 
   // ESTADOS--------------------------------------
-  String info = memAnimAle ? "Efecto: Aleatorio" : "Efecto: " + String(catalogo[memAnimEfecto].nombre);
-  // static String x = miIP.toString();
-  // animEstado = ESPUI.addControl(Label, x.c_str(), info, Turquoise);
-  animEstado = ESPUI.addControl(Label, "Info", info, Turquoise);
-  alarmEstad = ESPUI.addControl(Label, "", strHora(miAlarma.hor.h, miAlarma.hor.m), Turquoise, animEstado);
-  cabEstado = ESPUI.addControl(Label, "", "", Turquoise, animEstado);
-  ESPUI.addControl(Button, "Boton", "Reiniciar ESP32", None, animEstado, espReiniciar);
+  static String x = miIP.toString();
+  cabEstado = ESPUI.addControl(Label, x.c_str(), info(), Turquoise);
+  ESPUI.addControl(Button, "Boton", "Reiniciar ESP32", None, cabEstado, espReiniciar);
+  ESPUI.setElementStyle(cabEstado, estiloInfo);
 
-  ESPUI.setElementStyle(animEstado, String(estiloInfo));
-  ESPUI.setElementStyle(alarmEstad, String(estiloInfo));
-  ESPUI.setElementStyle(cabEstado, String(estiloInfo));
+  // VISTA-------------------------------------
+  horaEst = ESPUI.addControl(Switcher, "Carrusel", String(catVista[0].estado), Peterriver, tab0, webReEst);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Reloj", None, horaEst), labelsPer);
+  tempEst = ESPUI.addControl(Switcher, "", String(catVista[1].estado), Peterriver, horaEst, webTeEst);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Temperatura", None, horaEst), labelsPer);
+  humeEst = ESPUI.addControl(Switcher, "", String(catVista[2].estado), Peterriver, horaEst, webHuEst);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Humedad", None, horaEst), labelsPer);
+  crypto1 = ESPUI.addControl(Switcher, "", String(catCrypto[0].estado), Peterriver, horaEst, webCryptoEst1);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Cripto #1", None, horaEst), labelsPer);
+  crypto2 = ESPUI.addControl(Switcher, "", String(catCrypto[1].estado), Peterriver, horaEst, webCryptoEst2);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Cripto #2", None, horaEst), labelsPer);
+  deport1 = ESPUI.addControl(Switcher, "", String(catDeport[0].estado), Peterriver, horaEst, webDeportEst1);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Futbol", None, horaEst), labelsPer);
 
-  // RELOJ-------------------------------------
+  horaDuracionR = ESPUI.addControl(Number, "Duracion", String(catVista[0].duracion), Dark, tab0, webRelojDuracion);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Reloj", None, horaDuracionR), labelsPer);
+  horaDuracionT = ESPUI.addControl(Number, "", String(catVista[1].duracion), Dark, horaDuracionR, webRelojDuracion);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Temperatura", None, horaDuracionR), labelsPer);
+  horaDuracionH = ESPUI.addControl(Number, "", String(catVista[2].duracion), Dark, horaDuracionR, webRelojDuracion);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Humedad", None, horaDuracionR), labelsPer);
+  ESPUI.setElementStyle(horaDuracionR, inputColor);
+  ESPUI.setElementStyle(horaDuracionT, inputColor);
+  ESPUI.setElementStyle(horaDuracionH, inputColor);
+
+  criptoVel = ESPUI.addControl(Slider, "Velocidad", String(catCrypto[0].veloc), Dark, tab0, webVelocCrip);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "+ Criptos -", None, criptoVel), labelsPer);
+  ESPUI.addControl(Min, "", "10", None, criptoVel);
+  ESPUI.addControl(Max, "", "150", None, criptoVel);
+  futbolVel = ESPUI.addControl(Slider, "", String(velocSA), Dark, criptoVel, webVelocFutb);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "+ Futbol -", None, criptoVel), labelsPer);
+  ESPUI.addControl(Min, "", "10", None, futbolVel);
+  ESPUI.addControl(Max, "", "150", None, futbolVel);
+
+  // PANTALLA -------------------------------------
   horaEstado = ESPUI.addControl(Switcher, "Encender", "1", Wetasphalt, tab1, webRelojEstado); // Estado Encendido o Apagado
   horaBrillo = ESPUI.addControl(Slider, "Brillo", "0", Dark, tab1, webRelojBrillo);
   ESPUI.addControl(Min, "", "0", None, horaBrillo);
   ESPUI.addControl(Max, "", "10", None, horaBrillo);
 
-  // #if RTC
-  horaTipo = ESPUI.addControl(Select, "Hora", "", Emerald, tab1, webRelojTipo); // Tipo de reloj rtc o ntp
-  ESPUI.addControl(Option, "Modulo RTC", "O", Alizarin, horaTipo);
-  ESPUI.addControl(Option, "Servidor NTP", "1", Alizarin, horaTipo);
-  btnRTC = ESPUI.addControl(Button, "Modulo RTC DS3231", "Actualizar Datos", Alizarin, tab1, webRelojGuardar); // Guardar nueva hora
-
-  // #endif
-
-#if MOD_DHT
   climaTipo = ESPUI.addControl(Select, "Clima", "", Emerald, tab1, webClimaTipo); // Fuente de datos de temp. y hum.
   ESPUI.addControl(Option, "Modulo DHT22", "0", Alizarin, climaTipo);
   ESPUI.addControl(Option, "API openWeatherMap", "1", Alizarin, climaTipo);
-#endif
 
-  ESPUI.addControl(Number, "Desfase UTC", String(memHours), Peterriver, tab1, webRelojDesf);
-  ESPUI.addControl(Number, "Horario de verano", String(memDaylight), Peterriver, tab1, webRelojVeran);
+  horaTipo = ESPUI.addControl(Select, "Hora", "", Emerald, tab1, webRelojTipo); // Tipo de reloj rtc o ntp
+  ESPUI.addControl(Option, "Modulo RTC", "O", Alizarin, horaTipo);
+  ESPUI.addControl(Option, "Servidor NTP", "1", Alizarin, horaTipo);
   ESPUI.addControl(Switcher, "Reloj formato 12H", String(is12h), Wetasphalt, tab1, webFort12h);
 
-  ESPUI.addControl(Separator, "Mostrar", "", None, tab1); // Duracion para mostrar los datos
-  horaDuracionR = ESPUI.addControl(Number, "Tiempo de pausa (Seg)", String(catVista[0].duracion), Peterriver, tab1, webRelojDuracion);
-  horaEst = ESPUI.addControl(Switcher, "", String(catVista[0].estado), Wetasphalt, horaDuracionR, webReEst);
-  ESPUI.setElementStyle(horaEst, estiloVist);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Hora", None, horaDuracionR, webRelojDuracion), fondoLabels);
-  ESPUI.addControl(Min, "", "3", None, horaDuracionR);
-  ESPUI.addControl(Max, "", "600", None, horaDuracionR);
-  horaDuracionT = ESPUI.addControl(Number, "", String(catVista[1].duracion), Peterriver, horaDuracionR, webRelojDuracion);
-  tempEst = ESPUI.addControl(Switcher, "", String(catVista[1].estado), Wetasphalt, horaDuracionR, webTeEst);
-  ESPUI.setElementStyle(tempEst, estiloVist);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Temperatura", None, horaDuracionR, webRelojDuracion), fondoLabels);
-  ESPUI.addControl(Min, "", "3", None, horaDuracionT);
-  ESPUI.addControl(Max, "", "600", None, horaDuracionT);
-  horaDuracionH = ESPUI.addControl(Number, "", String(catVista[2].duracion), Peterriver, horaDuracionR, webRelojDuracion);
-  humeEst = ESPUI.addControl(Switcher, "", String(catVista[2].estado), Wetasphalt, horaDuracionR, webHuEst);
-  ESPUI.setElementStyle(humeEst, estiloVist);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Humedad", None, horaDuracionR, webRelojDuracion), fondoLabels);
-  ESPUI.addControl(Min, "", "3", None, horaDuracionH);
-  ESPUI.addControl(Max, "", "600", None, horaDuracionH);
-  ESPUI.setElementStyle(horaDuracionR, sinMarginB);
-  ESPUI.setElementStyle(horaDuracionT, sinMarginB);
-  ESPUI.setElementStyle(horaDuracionH, sinMarginB);
+  desfUTC = ESPUI.addControl(Number, "Hora", String(memHours), Peterriver, tab1, webRelojDesf);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "UTC", None, desfUTC), labelsPer);
+  horVer = ESPUI.addControl(Number, "Horario de verano", String(memDaylight), Peterriver, desfUTC, webRelojVeran);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Horario de Verano", None, desfUTC), labelsPer);
+  ESPUI.setElementStyle(desfUTC, inputColor);
+  ESPUI.setElementStyle(horVer, inputColor);
 
-  crypto1 = ESPUI.addControl(Switcher, "Velocidad de efecto", String(catCrypto[0].estado), Wetasphalt, tab1, webCryptoEst1);
-  ESPUI.setElementStyle(crypto1, estiloVist);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Cripto 1", None, crypto1, webRelojDuracion), fondoLabels);
-  crypto2 = ESPUI.addControl(Switcher, "", String(catCrypto[1].estado), Wetasphalt, crypto1, webCryptoEst2);
-  ESPUI.setElementStyle(crypto2, estiloVist);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Cripto 2", None, crypto1, webRelojDuracion), fondoLabels);
-  deport1 = ESPUI.addControl(Switcher, "", String(catDeport[0].estado), Wetasphalt, crypto1, webDeportEst1);
-  ESPUI.setElementStyle(deport1, estiloVist);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Futbol", None, crypto1, webRelojDuracion), fondoLabels);
-  ESPUI.setElementStyle(crypto1, sinMarginB);
-  ESPUI.setElementStyle(crypto2, sinMarginB);
-  ESPUI.setElementStyle(deport1, sinMarginB);
+  btnRTC = ESPUI.addControl(Button, "Modulo RTC DS3231", "Actualizar Datos", Alizarin, tab1, webRelojGuardar); // Guardar nueva hora
 
   // ALARMA------------------------------------
-  alarmHor = ESPUI.addControl(Text, "Hora", "00:00", Peterriver, tab2, webAlarmHora); // Hora de alarma
+  alarmHor = ESPUI.addControl(Text, "Hora", strHora(miAlarma.hor.h, miAlarma.hor.m), Peterriver, tab2, webAlarmHora); // Hora de alarma
   ESPUI.setInputType(alarmHor, "time");
-  ESPUI.setElementStyle(alarmHor, sinMarginB);
+  ESPUI.setElementStyle(alarmHor, inputColor);
 
   alarmRep = ESPUI.addControl(Switcher, "Repetir", String(miAlarma.repetir), Wetasphalt, tab2, webAlarmRepet); // Repetir alarma ON o OFF
-  alarmSilen = ESPUI.addControl(Button, "Silenciar alarma", "Aceptar", Emerald, tab2, webAlarmSilen);
+  alarmSilen = ESPUI.addControl(Button, "Silenciar", "Aceptar", Emerald, tab2, webAlarmSilen);
   alarmGuard = ESPUI.addControl(Switcher, "Activar", String(miAlarma.hor.est), Alizarin, tab2, webAlarmGuard); // Guardar o cancelar la alarma
 
   // EFECTOS ---------------------------------
@@ -411,17 +405,16 @@ void web_EspUI()
   animEfecto = ESPUI.addControl(Select, "Efectos", "", Peterriver, tab3, webanimEfecto);
   for (static int i = 0; i < ARRAY_SIZE(catalogo); i++)
     ESPUI.addControl(Option, catalogo[i].nombre, String(i).c_str(), None, animEfecto);
-  //  ESPUI.addControl(Option, catalogo[i].nombre.c_str(), String(i).c_str(), None, animEfecto);
 
   animDuracion = ESPUI.addControl(Slider, "Duracion (Min)", String(memAnimDuracion), Dark, tab3, webAnimDuracion);
   ESPUI.addControl(Min, "", "3", None, animDuracion);
   ESPUI.addControl(Max, "", "120", None, animDuracion);
 
-  ESPUI.addControl(Switcher, "Simple <-- Font --> Doble", String(fontSelect), Wetasphalt, tab3, webFont);
+  ESPUI.addControl(Switcher, "Simple <- Font -> Doble", String(fontSelect), Wetasphalt, tab3, webFont);
 
   // MENSAJE ------------------------------------
   mensText = ESPUI.addControl(Text, "Mensaje", "", Sunflower, tab4, webMensTexto);
-  mensTipo = ESPUI.addControl(Select, "Tipo", "", Emerald, tab4, webMensTipo);
+  mensTipo = ESPUI.addControl(Select, "Orientacion", "", Emerald, tab4, webMensTipo);
   ESPUI.addControl(Option, "Horizontal", "O", Alizarin, mensTipo);
   ESPUI.addControl(Option, "Vertical", "1", Alizarin, mensTipo);
 
@@ -431,70 +424,68 @@ void web_EspUI()
   ESPUI.addControl(Max, "", "60", None, mensDura);
 
   mensVelo = ESPUI.addControl(Slider, "Efecto", "20", Dark, tab4, webMensVelocidad);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Velocidad (ms)", None, mensVelo, webMensVelocidad), fondoLabels);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "+ Velocidad (ms) -", None, mensVelo), labelsPer);
   ESPUI.addControl(Min, "", "10", None, mensVelo);
   ESPUI.addControl(Max, "", "150", None, mensVelo);
-  ESPUI.setElementStyle(mensVelo, sinMarginB);
 
   mensPausa = ESPUI.addControl(Slider, "", "0", Dark, mensVelo, webMensPausa);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Pausa (Seg)", None, mensVelo, webMensPausa), fondoLabels);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Pausa (Seg)", None, mensVelo), labelsPer);
+  mensGuard = ESPUI.addControl(Button, "Mensaje", "Enviar", Alizarin, tab4, webMensEnviar);
   ESPUI.addControl(Min, "", "0", None, mensPausa);
   ESPUI.addControl(Max, "", "60", None, mensPausa);
-  ESPUI.setElementStyle(mensPausa, sinMarginB);
-  mensGuard = ESPUI.addControl(Button, "Mensaje", "Enviar", Alizarin, tab4, webMensEnviar);
 
   // CREDENCIALES ------------------------------------
   apiOWM = ESPUI.addControl(Text, "OpenWeatherMap", "", Peterriver, tab5, webApiOWM);
   ESPUI.setInputType(apiOWM, "password");
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "Api Key", "API Key", None, apiOWM, webApiOWM), fondoLabels);
-  owmCode = ESPUI.addControl(Text, "Codigo", String(miLlave.city), Dark, apiOWM, webOWMCode);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "Codigo", "Codigo (London,GB)", None, apiOWM, webOWMCode), fondoLabels);
-  ESPUI.setElementStyle(apiOWM, sinMarginB);
-  ESPUI.setElementStyle(owmCode, sinMarginB);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "Api Key", "API Key", None, apiOWM), labelsPer);
+  owmCode = ESPUI.addControl(Text, "Ciudad", String(miLlave.city), Dark, apiOWM, webOWMCode);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "City (London,GB)", None, apiOWM), labelsPer);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "<a href='https://openweathermap.org/' target='_blank' style='color:white;'>Mas inf. sobre city</a>", None, apiOWM), labelsPer);
   owmGuard = ESPUI.addControl(Button, "Nuevos OWM", "Guardar", Alizarin, apiOWM, webApiGuard);
+  ESPUI.setElementStyle(apiOWM, inputColor);
+  ESPUI.setElementStyle(owmCode, inputColor);
 
   apiCMC = ESPUI.addControl(Text, "CoinMarketCap", "", Turquoise, tab5, webApiCMC);
   ESPUI.setInputType(apiCMC, "password");
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "Api Key", "API Key", None, apiCMC, webApiCMC), fondoLabels);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "Api Key", "API Key", None, apiCMC), labelsPer);
   cmcCripto1 = ESPUI.addControl(Text, "Cripto 1", String(miLlave.criptos[0]), Dark, apiCMC, webCMCCripto1);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Cripto 1", None, apiCMC, webCMCCripto1), fondoLabels);
-
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Cripto #1", None, apiCMC), labelsPer);
   cmcCripto2 = ESPUI.addControl(Text, "Cripto 2", String(miLlave.criptos[1]), Dark, apiCMC, webCMCCripto2);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Cripto 2", None, apiCMC, webCMCCripto2), fondoLabels);
-
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Cripto #2", None, apiCMC, webCMCCripto2), labelsPer);
   cmcDivisa = ESPUI.addControl(Text, "Divisa", String(miLlave.divisa), Dark, apiCMC, webCMCDivisa);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Divisa", None, apiCMC, webCMCDivisa), fondoLabels);
-  ESPUI.setElementStyle(apiCMC, sinMarginB);
-  ESPUI.setElementStyle(cmcCripto1, sinMarginB);
-  ESPUI.setElementStyle(cmcCripto2, sinMarginB);
-  ESPUI.setElementStyle(cmcDivisa, sinMarginB);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Divisa", None, apiCMC), labelsPer);
   cmcGuard = ESPUI.addControl(Button, "Nuevos CMC", "Guardar", Alizarin, apiCMC, webApiGuard);
+  ESPUI.setElementStyle(apiCMC, inputColor);
+  ESPUI.setElementStyle(cmcCripto1, inputColor);
+  ESPUI.setElementStyle(cmcCripto2, inputColor);
+  ESPUI.setElementStyle(cmcDivisa, inputColor);
 
-  key1SA = ESPUI.addControl(Text, "SearpApi", "", Peterriver, tab5, webApiSA1);
+  key1SA = ESPUI.addControl(Text, "SerpApi", "", Peterriver, tab5, webApiSA1);
   ESPUI.setInputType(key1SA, "password");
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "Api Key 1", "API Key 1", None, key1SA, webApiSA1), fondoLabels);
-  key2SA = ESPUI.addControl(Text, "Api Key 2", "", Dark, key1SA, webApiSA2);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "API Key #1", None, key1SA), labelsPer);
+  key2SA = ESPUI.addControl(Text, "SerpApi 2", "", Dark, key1SA, webApiSA2);
   ESPUI.setInputType(key2SA, "password");
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "Api Key 2", "Api Key 2", None, key1SA, webApiSA2), fondoLabels);
-  teamSA = ESPUI.addControl(Text, "Equipo", String(miLlave.equipo), Dark, key1SA, webSATeam);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "Equipo", "Equipo", None, key1SA, webSATeam), fondoLabels);
-  locationSA = ESPUI.addControl(Text, "Origen (madrid,españa)", String(miLlave.location), Dark, key1SA, webSALocation);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "Origen", "Origen (madrid,españa)", None, key1SA, webSALocation), fondoLabels);
-  ESPUI.setElementStyle(key1SA, sinMarginB);
-  ESPUI.setElementStyle(key2SA, sinMarginB);
-  ESPUI.setElementStyle(teamSA, sinMarginB);
-  ESPUI.setElementStyle(locationSA, sinMarginB);
-  guardSA = ESPUI.addControl(Button, "Nuevos SA", "Guardar", Alizarin, key1SA, webApiGuard);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Api Key #2", None, key1SA), labelsPer);
+  teamSA = ESPUI.addControl(Text, "Team", String(miLlave.equipo), Dark, key1SA, webSATeam);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Team", None, key1SA), labelsPer);
+  locationSA = ESPUI.addControl(Text, "Location", String(miLlave.location), Dark, key1SA, webSALocation);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Location (Mexico City,Mexico)", None, key1SA), labelsPer);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "<a href='https://serpapi.com/locations-api' target='_blank' style='color:white;'>Mas inf. sobre location</a>", None, key1SA), labelsPer);
+  guardSA = ESPUI.addControl(Button, "Nuevos SA", "Guardar", Peterriver, key1SA, webApiGuard);
+  ESPUI.setElementStyle(key1SA, inputColor);
+  ESPUI.setElementStyle(key2SA, inputColor);
+  ESPUI.setElementStyle(teamSA, inputColor);
+  ESPUI.setElementStyle(locationSA, inputColor);
 
   // WIFI ------------------------------------
-  modAp = ESPUI.addControl(Switcher, "Modo Access Point", String(memModAP), Wetasphalt, tab6, webModoAP);
+  modAp = ESPUI.addControl(Switcher, "Modo AP", String(memModAP), Wetasphalt, tab6, webModoAP);
   ota = ESPUI.addControl(Switcher, "Activar OTA", String(memModOTA), Wetasphalt, tab6, webOta);
   wifi = ESPUI.addControl(Text, "WiFi", String(miLlave.ssid), Dark, tab6, webssid);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "SSID", None, wifi, webssid), fondoLabels);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "SSID", None, wifi), labelsPer);
   pass = ESPUI.addControl(Text, "Password", String(miLlave.password), Dark, wifi, webpass);
-  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Contraseña", None, wifi, webpass), fondoLabels);
-  ESPUI.setElementStyle(wifi, sinMarginB);
-  ESPUI.setElementStyle(pass, sinMarginB);
+  ESPUI.setElementStyle(ESPUI.addControl(Label, "", "Contrasena", None, wifi), labelsPer);
+  ESPUI.setElementStyle(wifi, inputColor);
+  ESPUI.setElementStyle(pass, inputColor);
   ESPUI.setInputType(pass, "password");
   wifiGuard = ESPUI.addControl(Button, "Nuevo WiFi", "Guardar", Alizarin, wifi, webWifiGuard);
 
@@ -502,33 +493,29 @@ void web_EspUI()
   ESPUI.begin("ESP32UI MAX7219");
   delay(100);
 
-  upd_web_EspUI();
+  upd_ESPUI();
 }
-void upd_web_EspUI()
+void upd_ESPUI()
 {
   ESPUI.updateSelect(horaTipo, String(memRelojUDP));
-#if MOD_DHT
   ESPUI.updateSelect(climaTipo, String(memClimaOWM));
+
+#ifdef MODO_DHT
+  ESPUI.setEnabled(climaTipo, false);
+  ESPUI.setPanelStyle(climaTipo, deshabilitar);
 #endif
 
-  if (miAlarma.hor.est)
-  { // Alarma activo
-    String n = miAlarma.repetir ? " Repetir" : " ";
-    n = "Alarma: " + strHora(miAlarma.hor.h, miAlarma.hor.m) + n;
-    ESPUI.print(alarmEstad, n);
-  }
-  else
-  { // Alarma no activo
-    ESPUI.print(alarmEstad, String("Alarma: Ninguno"));
+  if (!miAlarma.hor.est)
+  {
     ESPUI.setEnabled(alarmSilen, false);
     ESPUI.setPanelStyle(alarmSilen, deshabilitar);
   }
 
-  if (!RTC)
+  if (!MOD_RTC)
   {
     ESPUI.setEnabled(horaTipo, false);
-    ESPUI.setPanelStyle(horaTipo, deshabilitar);
     ESPUI.setEnabled(btnRTC, false);
+    ESPUI.setPanelStyle(horaTipo, deshabilitar);
     ESPUI.setPanelStyle(btnRTC, deshabilitar);
   }
 
@@ -543,6 +530,20 @@ void upd_web_EspUI()
     ESPUI.setEnabled(animDuracion, false);
     ESPUI.setPanelStyle(animDuracion, deshabilitar);
   }
+}
+
+void webVelocCrip(Control *sender, int value)
+{
+  test(sender, value);
+  catCrypto[0].veloc = sender->value.toInt();
+  catCrypto[1].veloc = catCrypto[0].veloc;
+  setInt("velocCMC", catCrypto[0].veloc);
+}
+void webVelocFutb(Control *sender, int value)
+{
+  test(sender, value);
+  velocSA = sender->value.toInt();
+  setInt("velocSA", velocSA);
 }
 
 void webRelojEstado(Control *sender, int value)
@@ -572,6 +573,11 @@ void webClimaTipo(Control *sender, int value)
   test(sender, value);
   memClimaOWM = sender->value.toInt();
   setBool("cliTipo", memClimaOWM);
+
+  if (memClimaOWM)
+  {
+    leer_OpenWeatherMap();
+  }
 }
 void webRelojTipo(Control *sender, int value)
 { // RTC o NTP
@@ -587,7 +593,7 @@ void webRelojDesf(Control *sender, int value)
   if (syncTime())
   {
     setInt("hours", memHours);
-    cabInfo = "Nuevo desface UTM";
+    cabInfo = "Nuevo desface UTC";
     tipMsj = true;
     minAnt = 255;
   }
@@ -634,34 +640,24 @@ void webFort12h(Control *sender, int value)
   minAnt = 255;
 }
 
-// #if RTC
 void webRelojGuardar(Control *sender, int type)
 { // Guardar nueva hora RTC
   test(sender, type);
-#if RTC
+#if MOD_RTC
   switch (type)
   {
   case B_UP:
-    if (!rtc.lostPower())
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo))
     {
-      struct tm timeinfo;
-      if (getLocalTime(&timeinfo))
-      {
-        rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
-        cabInfo = "RTC: " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min) + ":" + String(timeinfo.tm_sec);
-        tAntWebCab = millis();
-        tipMsj = true;
-      }
-      else
-      {
-        cabInfo = "No se pudo actualizar la hora.";
-        tAntWebCab = millis();
-        tipMsj = false;
-      }
+      rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+      cabInfo = "RTC: " + String(timeinfo.tm_hour) + ":" + String(timeinfo.tm_min) + ":" + String(timeinfo.tm_sec);
+      tAntWebCab = millis();
+      tipMsj = true;
     }
     else
     {
-      cabInfo = "No se encuentra el RTC.";
+      cabInfo = "No se pudo actualizar la hora.";
       tAntWebCab = millis();
       tipMsj = false;
     }
@@ -669,7 +665,6 @@ void webRelojGuardar(Control *sender, int type)
   }
 #endif
 }
-// #endif
 void webRelojDuracion(Control *sender, int value)
 { // Cambiar tiempos de Reloj, Temp y Hum.
   test(sender, value);
@@ -680,12 +675,12 @@ void webRelojDuracion(Control *sender, int value)
     setInt("tiem0", catVista[0].duracion);
     break;
 
-  case 27:
+  case 24:
     catVista[1].duracion = sender->value.toInt();
     setInt("tiem1", catVista[1].duracion);
     break;
 
-  case 32:
+  case 26:
     catVista[2].duracion = sender->value.toInt();
     setInt("tiem2", catVista[2].duracion);
     break;
@@ -854,18 +849,18 @@ void webAnimAleatorio(Control *sender, int value)
   switch (value)
   {
   case S_ACTIVE:
-    ESPUI.print(animEstado, String("Efecto: Aleatorio"));
+
     ESPUI.setEnabled(animEfecto, false);
     ESPUI.setPanelStyle(animEfecto, deshabilitar);
     ESPUI.setEnabled(animDuracion, true);
     ESPUI.setPanelStyle(animDuracion, ";");
     memAnimAle = true;
     setBool("anAle", memAnimAle);
+    ESPUI.print(cabEstado, info());
     break;
 
   case S_INACTIVE:
-    String n = "Efecto: " + String(catalogo[memAnimEfecto].nombre);
-    ESPUI.print(animEstado, n);
+    // String n = "Efecto: " + String(catalogo[memAnimEfecto].nombre);
     ESPUI.updateSelect(animEfecto, String(memAnimEfecto));
     ESPUI.setEnabled(animEfecto, true);
     ESPUI.setPanelStyle(animEfecto, ";");
@@ -873,6 +868,7 @@ void webAnimAleatorio(Control *sender, int value)
     ESPUI.setPanelStyle(animDuracion, deshabilitar);
     memAnimAle = false;
     setBool("anAle", memAnimAle);
+    ESPUI.print(cabEstado, info());
     break;
   }
 }
@@ -880,7 +876,7 @@ void webanimEfecto(Control *sender, int value)
 { // Elegir efecto In y Out
   test(sender, value);
   memAnimEfecto = sender->value.toInt();
-  ESPUI.print(animEstado, ("Efecto: " + String(catalogo[memAnimEfecto].nombre)));
+  ESPUI.print(cabEstado, info());
   setInt("anEfec", memAnimEfecto);
 }
 void webAnimDuracion(Control *sender, int value)
@@ -900,6 +896,12 @@ void webAlarmHora(Control *sender, int type)
   {
     miAlarma.hor.h = tmp.substring(0, pos).toInt();
     miAlarma.hor.m = tmp.substring(pos + 1).toInt();
+
+    if (miAlarma.hor.est)
+    {
+      ESPUI.print(cabEstado, info());
+      setStruct("miAlarm", &miAlarma, sizeof(miAlarma));
+    }
   }
   else
   {
@@ -911,8 +913,23 @@ void webAlarmHora(Control *sender, int type)
 void webAlarmRepet(Control *sender, int value)
 {
   test(sender, value);
-  miAlarma.repetir = sender->value.toInt();
-  setStruct("miAlarm", &miAlarma, sizeof(miAlarma));
+  switch (value)
+  {
+  case S_ACTIVE:
+    miAlarma.repetir = true;
+    break;
+  case S_INACTIVE:
+    miAlarma.repetir = false;
+    break;
+  }
+
+  if (miAlarma.hor.est)
+  {
+#if WEB
+    ESPUI.print(cabEstado, info());
+#endif
+    setStruct("miAlarm", &miAlarma, sizeof(miAlarma));
+  }
 }
 void webAlarmSilen(Control *sender, int type)
 {
@@ -927,32 +944,37 @@ void webAlarmSilen(Control *sender, int type)
 void webAlarmGuard(Control *sender, int value)
 {
   test(sender, value);
-  String n;
   switch (value)
   {
   case S_ACTIVE:
-    n = miAlarma.repetir ? " Repetir" : " ";
-    n = "Alarma: " + strHora(miAlarma.hor.h, miAlarma.hor.m) + n;
-    mensAlarm = true;
     miAlarma.hor.est = true;
+    mensAlarm = true;
+    sonando = false;
+    setStruct("miAlarm", &miAlarma, sizeof(miAlarma));
 
 #if WEB
-    ESPUI.updateControlValue(alarmEstad, n);
     ESPUI.setEnabled(alarmSilen, true);
     ESPUI.setPanelStyle(alarmSilen, ";");
+    ESPUI.print(cabEstado, info());
 #endif
     break;
+
   case S_INACTIVE:
     // cancelar alarma
+    miAlarma.hor.est = false;
+    miAlarma.silenciar = false;
     miAlarma.hor.h = 0;
     miAlarma.hor.m = 0;
-    miAlarma.hor.est = false;
-    miAlarma.repetir = false;
-    miAlarma.silenciar = false;
     sonando = true;
+    setStruct("miAlarm", &miAlarma, sizeof(miAlarma));
+
+#if WEB
+    ESPUI.setEnabled(alarmSilen, false);
+    ESPUI.setPanelStyle(alarmSilen, deshabilitar);
+    ESPUI.print(cabEstado, info());
+#endif
     break;
   }
-  setStruct("miAlarm", &miAlarma, sizeof(miAlarma));
 }
 // --------------
 void webMensTipo(Control *sender, int value)
@@ -1020,22 +1042,21 @@ void webMensEnviar(Control *sender, int type)
       miMsj.estado = !miMsj.estado;
       if (miMsj.estado)
       {
-        ESPUI.updateControlValue(mensGuard, String("Cancelar").c_str());
+        // ESPUI.updateControlValue(mensGuard, String("Cancelar").c_str());
+        ESPUI.updateButton(mensGuard, "Cancelar");
         tAntMensaj = millis();
       }
       else
       {
-        ESPUI.updateControlValue(mensGuard, String("Enviar").c_str());
-        ESPUI.updateControlValue(mensText, String(""));
+        // ESPUI.updateControlValue(mensGuard, String("Enviar").c_str());
+        ESPUI.updateButton(mensGuard, "Enviar");
+        ESPUI.updateText(mensText, "");
         // miMensaje = "";
       }
       break;
     }
     else
     {
-#if DEBUG
-      Serial.println("Mensaje vacio.");
-#endif
       cabInfo = "Mensaje vacio.";
       tAntWebCab = millis();
       tipMsj = false;
@@ -1239,21 +1260,25 @@ void webApiGuard(Control *sender, int type)
     String x = sender->label;
     if (x == "Nuevos SA")
     {
-      leer_serapApi();
-      ESPUI.updateSelect(key1SA, "");
-      ESPUI.updateSelect(key2SA, "");
+      ESPUI.updateText(key1SA, "");
+      ESPUI.updateText(key2SA, "");
+      flagSA = true;
     }
     else if (x == "Nuevos CMC")
     {
       tAntCriptUpd = 0;
-      ESPUI.updateSelect(apiCMC, "");
+      ESPUI.updateText(apiCMC, "");
+    }
+    else if (x == "Nuevos OWM")
+    {
+      ESPUI.updateText(apiOWM, "");
     }
 
-    ESPUI.updateSelect(apiOWM, "");
     setStruct("miCreden", &miLlave, sizeof(miLlave));
     cabInfo = "Configuracion API guardado";
     tAntWebCab = millis();
     tipMsj = true;
+    break;
   }
 }
 void espReiniciar(Control *sender, int type)
@@ -1285,7 +1310,6 @@ void webFont(Control *sender, int value)
 }
 void test(Control *sender, int type)
 {
-#if DEBUG
   Serial.println(F("------------------"));
   Serial.print(F("ID:"));
   Serial.print(sender->id);
@@ -1295,11 +1319,80 @@ void test(Control *sender, int type)
   Serial.print(sender->label);
   Serial.print(F("' = "));
   Serial.println(sender->value);
-#endif
 }
 #endif
 
 // ----------------------------------------
+void getDatos()
+{
+  mem.begin("web", false);
+  delay(20);
+
+  catVista[0].estado = mem.getBool("horEst", true);
+  catVista[1].estado = mem.getBool("temEst", true);
+  catVista[2].estado = mem.getBool("humEst", true);
+  catCrypto[0].estado = mem.getBool("cry0est", true);
+  catCrypto[1].estado = mem.getBool("cry1est", true);
+  catDeport[0].estado = mem.getBool("dep0est", true);
+
+  catVista[0].duracion = mem.getInt("tiem0", 10);
+  catVista[1].duracion = mem.getInt("tiem1", 10);
+  catVista[2].duracion = mem.getInt("tiem2", 10);
+  catCrypto[0].veloc = mem.getInt("velocCMC", 30);
+  catCrypto[1].veloc = catCrypto[0].veloc;
+  velocSA = mem.getInt("velocSA", 30);
+  countSA = mem.getInt("counSA", 0);
+
+  memRelojUDP = mem.getBool("rTipo", true);
+  memHours = mem.getInt("hours", -4);
+  memDaylight = mem.getInt("daylight", 0);
+  is12h = mem.getBool("is12h", false);
+
+  memClimaOWM = mem.getBool("cliTipo", true);
+  memAnimAle = mem.getBool("anAle", true);
+  memAnimEfecto = mem.getInt("anEfec", 1);
+  memAnimDuracion = (byte)mem.getInt("anDura", 10);
+
+  memModAP = mem.getBool("modoAP", false);
+  memModOTA = mem.getBool("funcOta", false);
+  fontSelect = mem.getBool("tipFont", false);
+
+  mem.getBytes("miCreden", &miLlave, sizeof(miLlave));
+  mem.getBytes("miAlarm", &miAlarma, sizeof(miAlarma));
+
+  mem.end();
+}
+void setBool(const char *d, bool v)
+{
+  mem.begin("web", false);
+  mem.putBool(d, v);
+  delay(1);
+  mem.end();
+}
+void setInt(const char *d, int v)
+{
+  mem.begin("web", false);
+  mem.putInt(d, v);
+  mem.end();
+}
+void setStruct(const char *etiq, void *estruct, size_t tam)
+{
+  if (mem.begin("web", false))
+  {
+    size_t escritos = mem.putBytes(etiq, estruct, tam);
+    mem.end();
+
+    if (escritos == tam)
+    {
+      Serial.printf("NVS: '%s' guardado correctamente (%d bytes)\n", etiq, tam);
+    }
+    else
+    {
+      Serial.printf("NVS: Error al guardar '%s'\n", etiq);
+    }
+  }
+}
+
 uint8_t animProgress(uint8_t barr)
 {
   MD_MAX72XX *mx = P.getGraphicObject();
@@ -1352,7 +1445,7 @@ void conect_WiFi()
     WiFi.mode(WIFI_STA);
     WiFi.begin(miLlave.ssid, miLlave.password);
 
-    Serial.print(F("\nWifi conectando"));
+    Serial.print(F("\nWiFi conectando"));
     while (WiFi.status() != WL_CONNECTED && timeout > 0) // MODO CLIENTE
     {
       Serial.print(F("."));
@@ -1367,7 +1460,6 @@ void conect_WiFi()
       barra = animProgress(barra);
     }
 
-    Serial.printf(" TimeOut: %d\n", timeout);
     if (timeout > 0)
     {
       if (stable_Connect())
@@ -1376,7 +1468,7 @@ void conect_WiFi()
       }
       else
       {
-#if RTC
+#if MOD_RTC
         memRelojUDP = false;
 #endif
       }
@@ -1385,6 +1477,7 @@ void conect_WiFi()
     {
       modoAP();
     }
+    WiFi.setSleep(false);
   }
   else // MODO AP
   {
@@ -1406,7 +1499,7 @@ void conect_WiFi()
 }
 void modoAP()
 {
-  Serial.print("\n\nPunto de acceso");
+  Serial.print("\nPunto de acceso");
   memRelojUDP = false;
   memClimaOWM = false;
 
@@ -1422,6 +1515,7 @@ void modoAP()
     Serial.print(".");
     connect_timeout--;
   } while (connect_timeout);
+  WiFi.setSleep(false);
 }
 bool stable_Connect()
 {
@@ -1487,72 +1581,6 @@ void funcOta()
 }
 #endif
 
-void getDatos()
-{
-  mem.begin("web", false);
-  delay(20);
-
-  catVista[0].duracion = mem.getInt("tiem0", 10);
-  catVista[1].duracion = mem.getInt("tiem1", 10);
-  catVista[2].duracion = mem.getInt("tiem2", 10);
-  catVista[0].estado = mem.getBool("horEst", true);
-  catVista[1].estado = mem.getBool("temEst", true);
-  catVista[2].estado = mem.getBool("humEst", true);
-  catCrypto[0].estado = mem.getBool("cry0est", true);
-  catCrypto[1].estado = mem.getBool("cry1est", true);
-  catDeport[0].estado = mem.getBool("dep0est", true);
-
-  memRelojUDP = mem.getBool("rTipo", true);
-  memHours = mem.getInt("hours", -4);
-  memDaylight = mem.getInt("daylight", 0);
-  is12h = mem.getBool("is12h", false);
-
-  memClimaOWM = mem.getBool("cliTipo", true);
-  memAnimAle = mem.getBool("anAle", true);
-  memAnimEfecto = mem.getInt("anEfec", 1);
-  memAnimDuracion = (byte)mem.getInt("anDura", 10);
-
-  memModAP = mem.getBool("modoAP", false);
-  memModOTA = mem.getBool("funcOta", false);
-  fontSelect = mem.getBool("tipFont", false);
-  countSA = mem.getInt("countSA", 0);
-
-  mem.getBytes("miCreden", &miLlave, sizeof(miLlave));
-  mem.getBytes("miAlarm", &miAlarma, sizeof(miAlarma));
-
-  mem.end();
-}
-void setBool(const char *d, bool v)
-{
-  mem.begin("web", false);
-  mem.putBool(d, v);
-  delay(1);
-  mem.end();
-}
-void setInt(const char *d, int v)
-{
-  mem.begin("web", false);
-  mem.putInt(d, v);
-  mem.end();
-}
-void setStruct(const char *etiq, void *estruct, size_t tam)
-{
-  if (mem.begin("web", false))
-  {
-    size_t escritos = mem.putBytes(etiq, estruct, tam);
-    mem.end();
-
-    if (escritos == tam)
-    {
-      Serial.printf("NVS: '%s' guardado correctamente (%d bytes)\n", etiq, tam);
-    }
-    else
-    {
-      Serial.printf("NVS: Error al guardar '%s'\n", etiq);
-    }
-  }
-}
-
 #if WEB
 void webSiEstado()
 {
@@ -1560,21 +1588,21 @@ void webSiEstado()
   {
     if (tipMsj)
     {
-      ESPUI.getControl(animEstado)->color = ControlColor::Peterriver;
+      ESPUI.getControl(cabEstado)->color = ControlColor::Peterriver;
     }
     else
     {
-      ESPUI.getControl(animEstado)->color = ControlColor::Alizarin;
+      ESPUI.getControl(cabEstado)->color = ControlColor::Alizarin;
     }
-    ESPUI.updateControl(animEstado);
-    ESPUI.print(cabEstado, cabInfo);
+    ESPUI.updateControl(cabEstado);
+    ESPUI.print(cabEstado, info());
   }
   else
   {
-    ESPUI.getControl(animEstado)->color = ControlColor::Turquoise;
-    ESPUI.updateControl(animEstado);
+    ESPUI.getControl(cabEstado)->color = ControlColor::Turquoise;
+    ESPUI.updateControl(cabEstado);
     cabInfo = "";
-    ESPUI.print(cabEstado, cabInfo);
+    ESPUI.print(cabEstado, info());
   }
 }
 void WebMostrarMsj()
@@ -1601,7 +1629,8 @@ void WebMostrarMsj()
     {
       // miMensaje = "";
       miMsj.estado = false;
-      ESPUI.updateControlValue(mensGuard, String("Enviar").c_str());
+      // ESPUI.updateControlValue(mensGuard, String("Enviar").c_str());
+      ESPUI.updateButton(mensGuard, "Enviar");
       ESPUI.print(mensText, "");
     }
   }
@@ -1636,11 +1665,7 @@ void sonarAlarma()
     else
     {
       digitalWrite(buzzer, HIGH);
-#if DEBUG
-      cabInfo = String("sonando...");
-      tAntWebCab = millis();
-      tipMsj = true;
-#endif
+      Serial.println("Sonando...");
     }
   }
   else if (sonando)
@@ -1656,27 +1681,53 @@ void sonarAlarma()
       miAlarma.hor.m = 0;
       miAlarma.hor.est = false;
       setStruct("miAlarm", &miAlarma, sizeof(miAlarma));
+      Serial.println("luego de sonar");
 
 #if WEB
-      ESPUI.updateControlValue(alarmRep, String(miAlarma.repetir));
-      ESPUI.print(alarmEstad, String("Alarma: Ninguno"));
+      ESPUI.updateSwitcher(alarmRep, miAlarma.repetir);
       ESPUI.setEnabled(alarmSilen, false);
       ESPUI.setPanelStyle(alarmSilen, deshabilitar);
+      ESPUI.print(cabEstado, info());
 #endif
     }
   }
 }
 #endif
+String info()
+{
+  String x = memAnimAle ? "Efecto: Aleatorio" : "Efecto: " + String(catalogo[memAnimEfecto].nombre);
 
-#if MOD_DHT
+  if (miAlarma.hor.est)
+  {
+    x += "<br>Alarma: " + strHora(miAlarma.hor.h, miAlarma.hor.m) + (miAlarma.repetir ? " Repetir" : "");
+  }
+  else
+  {
+    x += "<br>Alarma: Ninguno";
+  }
+
+  if (cabInfo.length() > 0)
+  {
+    x += "<br>" + cabInfo;
+  }
+  return x;
+}
+
 void leerDHT()
 {
-  float t = dht.readTemperature() + (calibTemp);
-  float h = dht.readHumidity();
+  float t, h;
+#if MOD_DHT
+  t = dht.readTemperature() + (calibTemp);
+  h = dht.readHumidity();
+#endif
+
   if (isnan(t) || isnan(h))
   {
     t = 00.0;
     h = 00.0;
+    strcpy(catVista[1].datos, "xDHT");
+    strcpy(catVista[2].datos, "xDHT");
+
     cabInfo = "Error de lectura DHT";
     tAntWebCab = millis();
     tipMsj = false;
@@ -1684,7 +1735,6 @@ void leerDHT()
   snprintf(catVista[1].datos, sizeof(catVista[1].datos), "%.1f&", t);
   snprintf(catVista[2].datos, sizeof(catVista[2].datos), "%.1f%s", h, "%");
 }
-#endif
 
 void leer_Hora(bool &udp)
 {
@@ -1705,7 +1755,7 @@ void leer_Hora(bool &udp)
   }
   else
   {
-#if RTC
+#if MOD_RTC
     if (!rtc.lostPower())
     {
       DateTime tiempo = rtc.now();
@@ -1721,12 +1771,12 @@ void leer_Hora(bool &udp)
 #endif
   }
 }
-void modoHora(bool &udp)
+void modoHora()
 {
-  leer_Hora(udp);
+  leer_Hora(memRelojUDP);
   if (!miTiempo.estado)
   {
-    const char *etiqueta = udp ? "UDP" : "RTC";
+    const char *etiqueta = memRelojUDP ? "UDP" : "RTC";
 
     if (minAnt != 255)
     {
@@ -1793,27 +1843,30 @@ void leer_OpenWeatherMap()
     tAntWebCab = millis();
     tipMsj = false;
     http.end();
-
     // Serial.println("OWM -> httpCode: " + String(httpCode));
     return;
   }
 
   String payload = http.getString();
-  JSONVar data = JSON.parse(payload);
+  // JSONVar data = JSON.parse(payload);
+  DynamicJsonDocument data(1024);
+  DeserializationError err = deserializeJson(data, payload);
+  // Serial.printf("OWM - Memoria JSON: %d bytes\n", data.size());
 
-  // -----------------
-  if (JSON.typeof(data) != "undefined")
+  if (!data.isNull())
   {
     t = (double)data["main"]["temp"];
     h = (double)data["main"]["humidity"];
   }
 
-  if (isnan(t) || isnan(h))
+  if (isnan(t) || isnan(h) || err)
   {
     t = h = 0.0;
     strcpy(catVista[1].datos, "xJSON");
     strcpy(catVista[2].datos, "xJSON");
     http.end();
+
+    Serial.println(F("OWM -> Error al parsear JSON"));
     return;
   }
 
@@ -1821,9 +1874,9 @@ void leer_OpenWeatherMap()
   snprintf(catVista[2].datos, sizeof(catVista[2].datos), "%.1f%s", h, "%");
   http.end();
 }
-void modoClima(bool &owm)
+void modoClima()
 {
-  if (owm)
+  if (memClimaOWM)
   {
     unsigned long tActual = millis();
     if (tActual - tAntClimaUpd >= UPDTIME_OWM)
@@ -1834,9 +1887,7 @@ void modoClima(bool &owm)
   }
   else
   {
-#if MOD_DHT
     leerDHT();
-#endif
   }
 }
 
@@ -1870,9 +1921,13 @@ void leer_CoinMarketCap()
   }
 
   String payload = http.getString();
-  JSONVar data = JSON.parse(payload);
+  // JSONVar data = JSON.parse(payload);
+  DynamicJsonDocument data(4096);
+  DeserializationError err = deserializeJson(data, payload);
+  // Serial.printf("CMC - Memoria JSON: %d bytes\n", data.size());
 
-  if (JSON.typeof(data) == "undefined")
+  // if (JSON.typeof(data) == "undefined")
+  if (data.isNull() || err)
   {
     strcpy(catCrypto[0].datos, "xJSON");
     strcpy(catCrypto[1].datos, "xJSON");
@@ -1908,45 +1963,45 @@ void modoCrypto()
   }
 }
 
-String mostrarFutbol()
+void leerCreditoSerpApi()
 {
-  char txt[130];
-  const char *textoEst = estadoATexto(fxInfo.estado);
-  switch (fxInfo.estado)
+  delay(200);
+  char url[120];
+  int result = snprintf(url, sizeof(url), "https://serpapi.com/account.json?api_key=%s", miLlave.api_key[countSA]);
+
+  HTTPClient http;
+  http.begin(url);
+  if (http.GET() != HTTP_CODE_OK)
   {
-  case FX:
-    snprintf(txt, sizeof(txt), "%s: %02d:%02d, %s vs %s, %s", fxInfo.dia, fxInfo.fechaHora, fxInfo.fechaMinuto, fxInfo.local, fxInfo.visita, fxInfo.torneo);
-    break;
-  case LIVE:
-    if (fxInfo.minExt > 0)
-    {
-      snprintf(txt, sizeof(txt), "%s: %d+%d min, %s %s - %s %s", textoEst, fxInfo.min, fxInfo.minExt, fxInfo.local, fxInfo.sLocal, fxInfo.sVisita, fxInfo.visita);
-    }
-    else
-    {
-      snprintf(txt, sizeof(txt), "%s: +%d min, %s %s - %s %s", textoEst, fxInfo.min, fxInfo.local, fxInfo.sLocal, fxInfo.sVisita, fxInfo.visita);
-    }
-    break;
-  case HT:
-    snprintf(txt, sizeof(txt), "%s: %s %s - %s %s", textoEst, fxInfo.local, fxInfo.sLocal, fxInfo.sVisita, fxInfo.visita);
-    break;
-  case FT:
-    snprintf(txt, sizeof(txt), "%s: %s %s - %s %s", textoEst, fxInfo.local, fxInfo.sLocal, fxInfo.sVisita, fxInfo.visita);
-    break;
-  case vacio:
-    snprintf(txt, sizeof(txt), "%s:", "Sin Partidos");
-    break;
-  default:
-    snprintf(txt, sizeof(txt), "%s: %s", textoEst, fxInfo.torneo);
-    break;
+    Serial.println("Error http");
   }
-  return String(txt);
+
+  DynamicJsonDocument doc(1600);
+  DeserializationError err = deserializeJson(doc, http.getStream());
+  if (err)
+  {
+    Serial.println("Error parse account JSON");
+    http.end();
+    return;
+  }
+
+  const char *statusSA = doc["account_status"] | ""; // Estado
+  restSA = doc["plan_searches_left"] | 250;          // Restante mensual
+
+  if (restSA == 1)
+  {
+    countSA = (countSA + 1) % 2;
+    setInt("counSA", countSA);
+  }
+
+  Serial.println("--- Cuenta SerpApi ---");
+  Serial.printf("Estado: %s - Restante mensual: %d\n", statusSA, restSA);
+  http.end();
 }
 void getResultFutbol(JsonObject obj, bool esSpotlight)
 {
   // Limpiar toda la estructura antes de llenarla (opcional)
   memset(&fxInfo, 0, sizeof(futbol));
-  String team;
   strncpy(fxInfo.torneo, obj["tournament"] | obj["league"] | "Unknown", sizeof(fxInfo.torneo));
 
   strncpy(fxInfo.local, obj["teams"][0]["name"] | "N/A", sizeof(fxInfo.local));
@@ -1981,7 +2036,7 @@ void getResultFutbol(JsonObject obj, bool esSpotlight)
       if (lenDia > (int)sizeof(fxInfo.dia) - 1)
         lenDia = sizeof(fxInfo.dia) - 1;
       strncpy(fxInfo.dia, dateRaw, lenDia);
-      parsDateSA(String(fxInfo.dia));
+      parsDateSA();
 
       parsTimeSA(coma + 2); // Procesar "4:30 PM"
     }
@@ -1996,16 +2051,18 @@ void getResultFutbol(JsonObject obj, bool esSpotlight)
       if (lenDia > (int)sizeof(fxInfo.dia) - 1)
         lenDia = sizeof(fxInfo.dia) - 1;
       strncpy(fxInfo.dia, dateRaw, lenDia);
-      parsDateSA(String(fxInfo.dia));
+      parsDateSA();
     }
     else
     {
       strncpy(fxInfo.dia, dateRaw, sizeof(fxInfo.dia) - 1);
+      parsDateSA();
     }
     parsTimeSA(timeRaw); // Procesar "4:30 PM"
   }
+  imprimir();
 }
-void leer_serapApi()
+void leer_serapApi(bool noCache)
 {
   if (WiFi.status() != WL_CONNECTED || memModAP)
   {
@@ -2015,11 +2072,12 @@ void leer_serapApi()
   }
 
   char url[250];
-  int result = snprintf(url, sizeof(url), "https://serpapi.com/search.json?q=%s&location=%s&hl=en&api_key=%s&json_restrictor=sports_results&no_cache=true",
-                        miLlave.equipo, miLlave.location, (countSA > 250 ? miLlave.api_key[1] : miLlave.api_key[0]));
+  int result = snprintf(url, sizeof(url), "https://serpapi.com/search.json?q=%s&location=%s&hl=en&api_key=%s&json_restrictor=sports_results&no_cache=%s",
+                        miLlave.equipo, miLlave.location, miLlave.api_key[countSA], noCache ? "true" : "false");
+
   if (result >= sizeof(url))
   {
-    snprintf(fxInfo.torneo, sizeof(fxInfo.torneo), "%s", "xJSON");
+    snprintf(fxInfo.torneo, sizeof(fxInfo.torneo), "%s", "xURL");
     fxInfo.estado = error;
     return;
   }
@@ -2027,6 +2085,7 @@ void leer_serapApi()
   int count = 0;
   int code = -1;
   limpiarURL(url);
+  // Serial.println(String(url));
 
   HTTPClient http;
   do
@@ -2043,33 +2102,46 @@ void leer_serapApi()
     count++;
     delay(100);
 
-  } while (code != HTTP_CODE_OK && count < 3);
+  } while (code != HTTP_CODE_OK && count < 2);
 
   if (code != HTTP_CODE_OK)
   {
-    snprintf(fxInfo.torneo, sizeof(fxInfo.torneo), "Code %d ", code);
+    snprintf(fxInfo.torneo, sizeof(fxInfo.torneo), "http %d", code);
     fxInfo.estado = error;
     http.end();
     return;
   }
 
-  countSA += 1;
-  countSA = countSA == 500 ? 0 : countSA;
-  setInt("countSA", countSA);
+  restSA--;
+  if (restSA <= 1)
+  {
+    leerCreditoSerpApi();
+  }
 
   // Usar el Stream directamente para ahorrar un buffer de String intermedio.
-  DynamicJsonDocument doc(5120);
+  DynamicJsonDocument doc(4500); // bytes
   DeserializationError err = deserializeJson(doc, http.getStream());
+  // Serial.printf("SA - Memoria JSON: %d bytes\n", doc.size());
+
   if (err)
   {
-    snprintf(fxInfo.torneo, sizeof(fxInfo.torneo), "%s", "docJSON");
+    snprintf(fxInfo.torneo, sizeof(fxInfo.torneo), "%s", "xJSON");
     fxInfo.estado = error;
     http.end();
     doc.clear();
     return;
   }
 
-  // Serial.printf("Memoria JSON usada: %d bytes\n", doc.memoryUsage());
+  const char *er = doc["error"] | "";
+  if (strlen(er) > 0)
+  {
+    snprintf(fxInfo.torneo, sizeof(fxInfo.torneo), "%s", "Cuenta SerpApi");
+    fxInfo.estado = error;
+    http.end();
+    doc.clear();
+    return;
+  }
+
   JsonObject sports_results = doc["sports_results"];
   bool mostrado = false;
 
@@ -2105,10 +2177,51 @@ void leer_serapApi()
 
   doc.clear();
   http.end();
-  imprimir();
+}
+
+String mostrarFutbol()
+{
+  char txt[130];
+  const char *textoEst = estadoATexto(fxInfo.estado);
+  switch (fxInfo.estado)
+  {
+  case FX:
+    snprintf(txt, sizeof(txt), "%s: %02d:%02d, %s vs %s, %s", fxInfo.dia, fxInfo.fechaHora, fxInfo.fechaMinuto, fxInfo.local, fxInfo.visita, fxInfo.torneo);
+    break;
+  case LIVE:
+    if (fxInfo.minExt > 0)
+    {
+      snprintf(txt, sizeof(txt), "%s: %d+%d min, %s %s - %s %s", textoEst, fxInfo.min, fxInfo.minExt, fxInfo.local, fxInfo.sLocal, fxInfo.sVisita, fxInfo.visita);
+    }
+    else
+    {
+      snprintf(txt, sizeof(txt), "%s: +%d min, %s %s - %s %s", textoEst, fxInfo.min, fxInfo.local, fxInfo.sLocal, fxInfo.sVisita, fxInfo.visita);
+    }
+    break;
+  case HT:
+    snprintf(txt, sizeof(txt), "%s: %s %s - %s %s", textoEst, fxInfo.local, fxInfo.sLocal, fxInfo.sVisita, fxInfo.visita);
+    break;
+  case FT:
+    snprintf(txt, sizeof(txt), "%s: %s %s - %s %s", textoEst, fxInfo.local, fxInfo.sLocal, fxInfo.sVisita, fxInfo.visita);
+    break;
+  case vacio:
+    snprintf(txt, sizeof(txt), "%s", "Sin Partidos");
+    break;
+  default:
+    snprintf(txt, sizeof(txt), "%s: %s", textoEst, fxInfo.torneo);
+    break;
+  }
+  return String(txt);
 }
 void modoFutbol()
 {
+  if (flagSA)
+  {
+    leer_serapApi(true);
+    flagSA = false;
+    return;
+  }
+
   static bool current = false;
   static unsigned long tAntCurrent = 0;
 
@@ -2116,12 +2229,12 @@ void modoFutbol()
   {
     if (millis() - tAntCurrent > UPDTIME_SA)
     {
-      Serial.println(F("Actualizando partido en curso..."));
-      leer_serapApi();
+      Serial.println(F("Actualizando datos del partido..."));
+      leer_serapApi(true);
 
       if (fxInfo.estado == FT)
       {
-        Serial.println(F("Partido terminado. Finalizando seguimiento."));
+        Serial.println(F("Partido terminado."));
         current = false;
       }
       tAntCurrent = millis();
@@ -2134,8 +2247,8 @@ void modoFutbol()
   {
     if (miTiempo.minuto > fxInfo.fechaMinuto && miTiempo.minuto < fxInfo.fechaMinuto + 3)
     {
-      Serial.println(F("Iniciando seguimiento de partido."));
-      leer_serapApi();
+      Serial.println(F("Iniciando partido."));
+      leer_serapApi(true);
       current = true;
       tAntCurrent = millis();
     }
@@ -2221,7 +2334,7 @@ void RljSegundero()
   }
 }
 
-#if MICRO
+#if MOD_MICRO
 void microfono()
 {
   static byte flanco = 0;
@@ -2386,21 +2499,30 @@ void setup()
 {
   Wire.begin();
   Serial.begin(115200);
-#if MOD_DHT
-  dht.begin();
-#endif
-#if MICRO
+
+#if MOD_MICRO
   pinMode(micro, INPUT);
 #endif
   pinMode(buzzer, OUTPUT);
   randomSeed(analogRead(A0));
   getDatos();
 
+#if MOD_DHT
+  dht.begin();
+#else
+  memClimaOWM = true;
+#endif
+
 #if ENCODER
   pinMode(A_CLK, INPUT);
   pinMode(B_DT, INPUT);
   pinMode(BTN_SW, INPUT);
   lastCLKState = digitalRead(A_CLK);
+#endif
+
+#if MOD_RTC
+  if (!rtc.begin())
+    Serial.println(F("No se encontro el RTC"));
 #endif
 
   // MAX7219
@@ -2416,12 +2538,6 @@ void setup()
     catalogo[i].veloc *= CALIB_VELEFFECT;
   }
 
-// RTC
-#if RTC
-  if (!rtc.begin())
-    Serial.println(F("No se encontro el RTC"));
-#endif
-
   Serial.println(F("=============="));
   P.setSpriteData(pacman1, W_PMAN1, F_PMAN1, pacman2, W_PMAN1, F_PMAN1);
   P.displayText("MAX72", PA_CENTER, catalogo[1].veloc, 2000, catalogo[1].efecto, catalogo[1].efecto);
@@ -2432,12 +2548,15 @@ void setup()
     true;
 
   conect_WiFi();
-  WiFi.setSleep(false);
-
-  leer_serapApi();
-#if MOD_DHT
-  leerDHT();
+#if WEB
+  if (!memModOTA)
+    setupESPUI();
 #endif
+
+  leerDHT();
+  modoHora();
+  leer_serapApi(false);
+  leerCreditoSerpApi();
 
   leer_CoinMarketCap();
   leer_OpenWeatherMap();
@@ -2447,12 +2566,9 @@ void setup()
   while (!P.displayAnimate())
     true;
 
+#if OTA
   memModOTA ? funcOta() : (void)0;
-#if WEB
-  if (!memModOTA)
-    web_EspUI();
 #endif
-
   tAntSegdr = millis();
   tAntEfecto = millis();
   tAntUpdate = 0;
@@ -2462,8 +2578,6 @@ void setup()
 void loop()
 {
   static String dato;
-  static textEffect_t effect_In;
-  static textEffect_t effect_OUt;
   if ((millis() - tAntUpdate) > 2000)
   {
     sync();
@@ -2471,15 +2585,15 @@ void loop()
 
     if (!memEncendido)
       return;
-    modoHora(memRelojUDP);
-    modoClima(memClimaOWM);
+    modoHora();
+    modoClima();
   }
 
 #if WEB
   cabInfo.length() > 0 ? webSiEstado() : (void)0;
   miAlarma.hor.est ? sonarAlarma() : (void)0;
 #endif
-#if MICRO
+#if MOD_MICRO
   !sonando ? microfono() : (void)0;
 #endif
 
@@ -2543,17 +2657,17 @@ void loop()
 
       case vCript1: // ====> CRYPTO 1
         dato = catCrypto[0].datos;
-        P.displayText(dato.c_str(), PA_CENTER, catalogo[3].veloc, 0, catalogo[3].efecto, catalogo[3].efecto);
+        P.displayText(dato.c_str(), PA_CENTER, catCrypto[0].veloc, 0, catalogo[3].efecto, catalogo[3].efecto);
         break;
 
       case vCript2: // ====> CRYPTO 2
         dato = catCrypto[1].datos;
-        P.displayText(dato.c_str(), PA_CENTER, catalogo[3].veloc, 0, catalogo[3].efecto, catalogo[3].efecto);
+        P.displayText(dato.c_str(), PA_CENTER, catCrypto[1].veloc, 0, catalogo[3].efecto, catalogo[3].efecto);
         break;
 
       case vFutbol: // ====> FOOTBALL
         dato = mostrarFutbol();
-        P.displayText(dato.c_str(), PA_CENTER, catDeport[0].veloc * CALIB_VELEFFECT, 0, catalogo[3].efecto, catalogo[3].efecto);
+        P.displayText(dato.c_str(), PA_CENTER, velocSA, 0, catalogo[3].efecto, catalogo[3].efecto);
         break;
 #if ENCODER
       case vTimer: // ====> TEMPORIZADOR
@@ -2604,25 +2718,25 @@ void loop()
 void sync()
 {
   static bool syncHoy = false;
+  uint8_t t = 4;
 
   if (miTiempo.hora == 0) // Resincronización (00:01 - 00:03)
   {
-    if (miTiempo.minuto > 0 && miTiempo.minuto < 4)
+    if (miTiempo.minuto > 0 && miTiempo.minuto < t)
     {
       if (!syncHoy)
       {
         if (syncTime())
         {
-          leer_serapApi();
+          leer_serapApi(false);
+          leerCreditoSerpApi();
           syncHoy = true;
+          Serial.println("Sincronizacion diaria.");
         }
       }
     }
 
-    if (miTiempo.minuto == 4)
-    {
-      syncHoy = false;
-    }
+    syncHoy = (miTiempo.minuto == t) ? false : syncHoy;
   }
 }
 
@@ -2641,15 +2755,16 @@ String strHora(uint8_t &h, uint8_t &m)
   return String(buffer);
 }
 
-void parsDateSA(String txtDia)
+void parsDateSA()
 {
   time_t ahora;
   time(&ahora);
   struct tm info;
   localtime_r(&ahora, &info);
-
   time_t tCalculado = ahora;
-  txtDia.toLowerCase();
+
+  fxInfo.dia[0] = tolower(fxInfo.dia[0]);
+  String txtDia = String(fxInfo.dia);
 
   if (txtDia == "today")
   {
@@ -2680,6 +2795,7 @@ void parsDateSA(String txtDia)
   // Guardar en tu estructura
   fxInfo.fechaDia = fechaFinal.tm_mday;
   fxInfo.fechaMes = fechaFinal.tm_mon + 1;
+
   tradDiaSA(fxInfo.dia, sizeof(fxInfo.dia));
 }
 void parsTimeSA(const char *fuente)
@@ -2861,12 +2977,10 @@ const char *estadoATexto(partidoEst est)
 
 void imprimir()
 {
-  Serial.println("\n--- DATOS (STRUCT) ---");
+  Serial.println("\n--- DATOS (SERPAPI) ---");
   const char *textoEstado = estadoATexto(fxInfo.estado);
   Serial.printf("Estado: %s\n", textoEstado);
-  Serial.printf("Partido: %s %s - %s %s\n", fxInfo.local, fxInfo.sLocal, fxInfo.sVisita, fxInfo.visita);
-  Serial.printf("Torneo: %s\n", fxInfo.torneo);
+  Serial.printf("Partido: %s %s - %s %s, %s\n", fxInfo.local, fxInfo.sLocal, fxInfo.sVisita, fxInfo.visita, fxInfo.torneo);
   Serial.printf("Minuto: +%02d min.\n", fxInfo.min);
   Serial.printf("Fecha: %s, %02d/%02d - %02d:%02d\n", fxInfo.dia, fxInfo.fechaDia, fxInfo.fechaMes, fxInfo.fechaHora, fxInfo.fechaMinuto);
-  Serial.printf("Solitud Nro: %d\n\n", countSA);
 }
