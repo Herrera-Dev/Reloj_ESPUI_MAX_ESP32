@@ -1,5 +1,4 @@
 #include <Preferences.h>
-Preferences mem;
 void InitOTA()
 {
   ArduinoOTA.onStart([]()

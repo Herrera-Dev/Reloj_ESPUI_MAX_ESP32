@@ -1,9 +1,9 @@
 from serpapi import GoogleSearch
-import json, datetime
+import json
 
 params = {
-    "q": "barcelona FC",
-    "location": "madrid, españa",
+    "q": "Manchester City",
+    "location": "Mexico City,Mexico",
     "hl": "en",
     "api_key": "API-KEY",
     "json_restrictor": "sports_results",
