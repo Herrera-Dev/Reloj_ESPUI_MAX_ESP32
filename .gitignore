@@ -1,6 +1,7 @@
-# Ignorar todas las carpetas ocultas
+# Ignorar todas
 .*/
+venv/
 espUI_helpers.cpp.txt
 espUI_helpers.h.txt
-# Ignorar archivos
+
 
